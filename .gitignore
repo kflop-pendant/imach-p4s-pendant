@@ -1,0 +1,13 @@
+# .NET build output
+[Bb]in/
+[Oo]bj/
+
+# Local editor auto-backups and KFLOP compile outputs
+*.bak
+*.bak_*
+*.bak-*
+*.out
+
+# OS cruft
+Thumbs.db
+.DS_Store

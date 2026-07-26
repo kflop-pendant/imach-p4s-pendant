@@ -1,0 +1,50 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <!-- net48 because KMotion_dotNet is a .NET Framework assembly -->
+    <TargetFramework>net48</TargetFramework>
+    <!-- x64 to match the 64-bit KMotion Release64 DLLs and 64-bit libusb -->
+    <PlatformTarget>x64</PlatformTarget>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>iMachKflop</AssemblyName>
+    <RootNamespace>iMachKflop</RootNamespace>
+    <Nullable>disable</Nullable>
+    <!-- ONE place to point at your KMotion install. Used by the KMotion_dotNet
+         reference (HintPath) AND the post-build deploy target below. Change this
+         single line for a different KMotion version. -->
+    <KMotionRoot>C:\KMotion5.4.3</KMotionRoot>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- Lets `dotnet build` compile net48 without full Visual Studio installed -->
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+    <!-- USB access to the pendant (WinUSB driver set via Zadig) -->
+    <PackageReference Include="LibUsbDotNet" Version="2.2.29" />
+  </ItemGroup>
+  <ItemGroup>
+    <Reference Include="KMotion_dotNet">
+      <HintPath>$(KMotionRoot)\KMotion\Release64\KMotion_dotNet.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+  <!-- Auto-deploy the built exe AND its dependency DLLs into the KMotion Release64
+       tree so it can run (KMotion_dotNet.dll lives there; LibUsbDotNet must travel
+       with the exe). Copies all build-output DLLs so new dependencies deploy too. -->
+  <Target Name="DeployToRelease64" AfterTargets="Build">
+    <ItemGroup>
+      <DeployFiles Include="$(TargetPath)" />
+      <DeployFiles Include="$(TargetDir)*.dll" />
+    </ItemGroup>
+    <Copy SourceFiles="@(DeployFiles)"
+          DestinationFolder="$(KMotionRoot)\KMotion\Release64" />
+    <!-- The bridge loads these two from its own directory (see Program.cs), so deploy
+         them alongside the exe. PendantService.c is always refreshed (it must match the
+         build). pendant.conf is SEEDED only if absent, so a user's tuning edits in
+         Release64 survive rebuilds (edit pendant.conf + restart, no rebuild). -->
+    <Copy SourceFiles="$(MSBuildProjectDirectory)\PendantService.c"
+          DestinationFolder="$(KMotionRoot)\KMotion\Release64" />
+    <Copy SourceFiles="$(MSBuildProjectDirectory)\pendant.conf"
+          DestinationFolder="$(KMotionRoot)\KMotion\Release64"
+          Condition="!Exists('$(KMotionRoot)\KMotion\Release64\pendant.conf')" />
+    <Message Importance="high" Text="Deployed $(TargetFileName) + DLLs + PendantService.c (+ pendant.conf if absent) -> $(KMotionRoot)\KMotion\Release64" />
+  </Target>
+</Project>

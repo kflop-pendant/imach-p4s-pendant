@@ -1,0 +1,622 @@
+/* ============================================================================
+ * KflopToKMotionCNCFunctions.c
+ *
+ * Dynomotion's stock KFLOP <-> KMotionCNC helper (DoPC, DROLabel, SetVars, ...),
+ * shipped with every KMotion install. Redistributed here WITH PERMISSION from
+ * Dynomotion (Tom Kerekes) so this repo builds standalone. This is NOT original
+ * work of this project; copyright remains Dynomotion's. If you have KMotion
+ * installed you already have this file under
+ *   <KMotion>\C Programs\KflopToKMotionCNCFunctions.c
+ * ============================================================================ */
+
+#define CANON_UNITS_INCHES 1
+#define CANON_UNITS_MM 2
+
+int DoPCFloat(int cmd, float f);
+int DoPCInt(int cmd, int i);
+int DoPCIntNoWait(int cmd, int i);
+int DoPCNoWait(int cmd);
+int DoPC(int cmd);
+int SetVars(int varoff, int n, int poff);
+int GetVars(int varoff, int n, int poff);
+
+
+double GetUserDataDouble(int i)
+{
+	double d;
+	
+	((int*)(&d))[0] = persist.UserData[i*2];
+	((int*)(&d))[1] = persist.UserData[i*2+1];
+	return d;
+}
+
+void SetUserDataDouble(int i, double v)
+{
+	double d=v;
+	persist.UserData[i*2]   = ((int*)(&d))[0];
+	persist.UserData[i*2+1] = ((int*)(&d))[1] ;
+}
+
+
+double RoundToReasonable(double v, int Units)
+{
+	if (Units==CANON_UNITS_INCHES)			// for inches round to 6 digits
+	{
+		if (v<0)
+			return ((int)(-v * 1e6 + 0.5)) / -1e6;
+		else
+			return ((int)(v * 1e6 + 0.5)) / 1e6;
+	}
+	else									// for mm round to 4 digits
+	{
+		if (v<0)
+			return ((int)(-v * 1e4 + 0.5)) / -1e4;
+		else
+			return ((int)(v * 1e4 + 0.5)) / 1e4;
+	}
+}
+
+
+int GetDROs(double *DROx, double *DROy, double *DROz, double *DROa, double *DROb, double *DROc)
+{
+	if (DoPCInt(PC_COMM_GET_DROS,TMP)) return 1;       // Var index and Cmd
+	*DROx=GetUserDataDouble(TMP);
+	*DROy=GetUserDataDouble(TMP+1);
+	*DROz=GetUserDataDouble(TMP+2);
+	*DROa=GetUserDataDouble(TMP+3);
+	*DROb=GetUserDataDouble(TMP+4);
+	*DROc=GetUserDataDouble(TMP+5);
+	return 0;
+}
+
+int GetMachine(double *Machinex, double *Machiney, double *Machinez, double *Machinea, double *Machineb, double *Machinec)
+{
+	if (DoPCInt(PC_COMM_GET_MACHINE_COORDS,TMP)) return 1;       // Var index and Cmd
+	*Machinex=GetUserDataDouble(TMP);
+	*Machiney=GetUserDataDouble(TMP+1);
+	*Machinez=GetUserDataDouble(TMP+2);
+	*Machinea=GetUserDataDouble(TMP+3);
+	*Machineb=GetUserDataDouble(TMP+4);
+	*Machinec=GetUserDataDouble(TMP+5);
+	return 0;
+}
+
+int GetMiscSettings(int *Units, int *TWORD, int *HWORD, int *DWORD)
+{
+	if (DoPCInt(PC_COMM_GET_MISC_SETTINGS,TMP)) return 1; 
+	
+	*Units = persist.UserData[TMP];
+	*TWORD = persist.UserData[TMP+1];
+	*HWORD = persist.UserData[TMP+2];
+	*DWORD = persist.UserData[TMP+3];
+	return 0;
+}
+
+int GetToolTableIndexFromID(int ToolID, int *TIndex)
+{
+	persist.UserData[PC_COMM_PERSIST+2] = TMP;       	// persist offset 
+	if (DoPCInt(PC_COMM_GET_TOOLTABLE_INDEX,ToolID)) return 1; 
+	
+	*TIndex = persist.UserData[TMP];
+	return 0;
+}
+
+int GetToolSlotAndID(int *Slot, int *ID)
+{
+	if (DoPCInt(PC_COMM_GET_TOOL_SLOT_ID,TMP)) return 1; 
+	
+	*Slot = persist.UserData[TMP];
+	*ID = persist.UserData[TMP+1];
+	return 0;
+}
+
+
+// Write a string Comment to a Tool Table entry.
+// Put the string into the gather buffer at the specified offset (in words)
+// KMotionCNC will upload the comment and then clear the persist variable.
+//
+// SetToolTableComment Persist+1 = Tool Table Index
+//					   Persist+2 = gather buffer offset (32-bit words) to where to get Comment string
+//					   Result indicating complete.  0=Not Complete, 1=Complete, -1=Invalid Tool Index
+
+void SetToolComment(int gather_offset, int ToolIndex, char *s)
+{
+	char *p=(char *)gather_buffer+gather_offset*sizeof(int);
+	int i;
+	
+	// now copy string
+	i=0;
+	do 
+	{
+		p[i]=s[i];
+		i++;
+	}
+	while (s[i-1]);
+	
+	persist.UserData[PC_COMM_PERSIST + 2] = gather_offset; // set gather offset
+	DoPCInt(PC_COMM_SET_TOOLTABLE_COMMENT, ToolIndex);
+	return;
+}
+
+// Read a string Comment from a Tool Table entry.
+// KMotionCNC puts the string into the gather buffer at the specified offset (in words)
+// clear the persist variable.
+// GetToolTableComment Persist+1 = Tool Table Index
+//					   Persist+2 = gather buffer offset (32-bit words) to where to place Comment string
+//					   Result indicating complete.  0=Not Complete, 1=Complete, -1=Err reading Tool File, -2=Invalid Tool Index
+
+
+void GetToolComment(int gather_offset, int ToolIndex, char* s)
+{
+	char* p = (char*)gather_buffer + gather_offset * sizeof(int);
+	int i;
+
+	persist.UserData[PC_COMM_PERSIST + 2] = gather_offset; // set gather offset
+	DoPCInt(PC_COMM_GET_TOOLTABLE_COMMENT, ToolIndex);
+
+	// now copy string
+	i = 0;
+	do
+	{
+		s[i] = p[i];
+		i++;
+	} while (s[i - 1]);
+
+	return;
+}
+
+
+// Read the Current line of GCode.
+// KMotionCNC puts the string into the gather buffer at the specified offset (in words)
+// clear the persist variable.
+// GetToolTableComment Persist+1 = gather buffer offset (32-bit words) to where to place Comment string
+//					   Result indicating complete.  0=Not Complete, 1=Complete, -1=Error
+
+
+void GetGCodeLine(int gather_offset, char* s)
+{
+	char* p = (char*)gather_buffer + gather_offset * sizeof(int);
+	int i;
+
+	persist.UserData[PC_COMM_PERSIST + 1] = gather_offset; // set gather offset
+	DoPC(PC_COMM_GET_GCODE_LINE);
+
+	// now copy string
+	i = 0;
+	do
+	{
+		s[i] = p[i];
+		i++;
+	} while (s[i - 1]);
+
+	return;
+}
+
+
+// Read the Current Date Time.
+// KMotionCNC puts the string into the gather buffer at the specified offset (in words)
+// clear the persist variable.
+// GetToolTableComment Persist+1 = gather buffer offset (32-bit words) to where to place Comment string
+//					   Result indicating complete.  0=Not Complete, 1=Complete, -1=Error
+
+
+void GetDateTime(int gather_offset, char* s)
+{
+	char* p = (char*)gather_buffer + gather_offset * sizeof(int);
+	int i;
+
+	persist.UserData[PC_COMM_PERSIST + 1] = gather_offset; // set gather offset
+	DoPC(PC_COMM_GET_DATE_TIME);
+
+	// now copy string
+	i = 0;
+	do
+	{
+		s[i] = p[i];
+		i++;
+	} while (s[i - 1]);
+
+	return;
+}
+
+
+
+int GetFixtureIndex(int *FixtureIndex)
+{
+	if (GetVars(5220,1,TMP)) return 1;  // Download to persist TMP
+	*FixtureIndex=(int)GetUserDataDouble(TMP);
+	return 0;
+}
+
+int GetOriginOffset(double *OriginOffset, int FixtureIndex, int Axis)
+{
+	if (GetVars(5200+FixtureIndex*20+Axis+1,1,TMP)) return 1;  // Download to persist TMP
+	*OriginOffset=GetUserDataDouble(TMP);
+	return 0;
+}
+
+int GetAxisOffset(double *AxisOffset, int Axis)
+{
+	if (GetVars(5200+Axis+11,1,TMP)) return 1;  // Download to persist TMP
+	*AxisOffset=GetUserDataDouble(TMP);
+	return 0;
+}
+
+// Request a Tool Length offset, answer will be placed at persist offset
+int GetToolLength(int index, double *Length)
+{
+	persist.UserData[PC_COMM_PERSIST+2] = TMP;       	// persist offset (doubles)
+	if (DoPCInt(PC_COMM_GET_TOOLTABLE_LENGTH,index)) return 1; // Tool index and Cmd
+	*Length=GetUserDataDouble(TMP);
+	return 0;
+}
+
+// Change a Tool Length offset, value to be passed up is at specified persist offset
+int SetToolLength(int index, double Length)
+{
+	SetUserDataDouble(TMP,Length);
+	persist.UserData[PC_COMM_PERSIST+2] = TMP;       	// persist offset (doubles)
+	return DoPCInt(PC_COMM_SET_TOOLTABLE_LENGTH,index); // Tool index and Cmd
+}
+
+// Request a Tool Diameter, answer will be placed at persist offset
+int GetToolDiameter(int index, double *Diameter)
+{
+	persist.UserData[PC_COMM_PERSIST+2] = TMP;       	// persist offset (doubles)
+	if (DoPCInt(PC_COMM_GET_TOOLTABLE_DIAMETER,index)) return 1; // Tool index and Cmd
+	*Diameter=GetUserDataDouble(TMP);
+	return 0;
+}
+
+// Change a Tool Diameter, value to be passed up is at specified persist offset
+int SetToolDiameter(int index, double Diameter)
+{
+	SetUserDataDouble(TMP,Diameter);
+	persist.UserData[PC_COMM_PERSIST+2] = TMP;       	// persist offset (doubles)
+	return DoPCInt(PC_COMM_SET_TOOLTABLE_DIAMETER,index); // Tool index and Cmd
+}
+
+
+// Axis indices
+#define AXIS_X 0
+#define AXIS_Y 1
+#define AXIS_Z 2
+#define AXIS_A 3
+#define AXIS_B 4
+#define AXIS_C 5
+#define AXIS_U 6
+#define AXIS_V 7
+#define NUM_AXES 8
+
+// Parameter type indices
+#define PT_VEL              0
+#define PT_ACCEL            1
+#define PT_COUNTS_PER_INCH  2
+#define PT_JOG_VEL         3
+#define NUM_PARAM_TYPES     3
+
+
+// Set a Trajectory Planner Parameter given Type and Axis
+int SetTPParameter(int Type, int Axis, double value)
+{
+	SetUserDataDouble(TMP, value);
+	persist.UserData[PC_COMM_PERSIST + 3] = TMP;       	// persist offset (doubles)
+	persist.UserData[PC_COMM_PERSIST + 2] = Axis;       // Axis
+	return DoPCInt(PC_COMM_SET_TP_PARAM, Type); // Parameter Type and Cmd
+}
+
+
+// Get a Trajectory Planner Parameter given Type and Axis
+int GetTPParameter(int Type, int Axis, double *value)
+{
+	persist.UserData[PC_COMM_PERSIST+3] = TMP;       	// persist offset (doubles)
+	persist.UserData[PC_COMM_PERSIST + 2] = Axis;       // Axis
+	if (DoPCInt(PC_COMM_GET_TP_PARAM, Type)) return 1; // Parameter Type and Cmd
+	*value =GetUserDataDouble(TMP);
+	return 0;
+}
+
+// Change a Tool X offset, value to be passed up is at specified persist offset
+int SetToolOffsetX(int index, double OffsetX)
+{
+	SetUserDataDouble(TMP,OffsetX);
+	persist.UserData[PC_COMM_PERSIST+2] = TMP;       	// persist offset (doubles)
+	return DoPCInt(PC_COMM_SET_TOOLTABLE_OFFSETX,index); // Tool index and Cmd
+}
+
+// Request a Tool Y offset, answer will be placed at persist offset
+int GetToolOffsetY(int index, double *OffsetY)
+{
+	persist.UserData[PC_COMM_PERSIST+2] = TMP;       	// persist offset (doubles)
+	if (DoPCInt(PC_COMM_GET_TOOLTABLE_OFFSETY,index)) return 1; // Tool index and Cmd
+	*OffsetY=GetUserDataDouble(TMP);
+	return 0;
+}
+
+// Change a Tool Y offset, value to be passed up is at specified persist offset
+int SetToolOffsetY(int index, double OffsetY)
+{
+	SetUserDataDouble(TMP,OffsetY);
+	persist.UserData[PC_COMM_PERSIST+2] = TMP;       	// persist offset (doubles)
+	return DoPCInt(PC_COMM_SET_TOOLTABLE_OFFSETY,index); // Tool index and Cmd
+}
+
+int SetVars(int varoff, int n, int poff)
+{
+	persist.UserData[PC_COMM_PERSIST+2] = n;       // number of elements
+	persist.UserData[PC_COMM_PERSIST+3] = poff;    // persist offset (doubles)
+	return DoPCInt(PC_COMM_SET_VARS,varoff);       // Var index and Cmd
+}
+
+int GetVars(int varoff, int n, int poff)
+{
+	persist.UserData[PC_COMM_PERSIST+2] = n;       // number of Vars
+	persist.UserData[PC_COMM_PERSIST+3] = poff;    // first VAR to get
+	return DoPCInt(PC_COMM_GET_VARS,varoff);       // Var index and Cmd
+}
+
+// Do G43 Hxx Set Tool Length Comp On for Tool xx Persist+1 = H number (integer) from G43Hxx command
+int G43(int Tool)
+{
+	return DoPCInt(PC_COMM_G43, Tool); // G43 + Tool Number
+}
+
+// Do G43.4 Hxx Set Tool Length Comp On (with TCP for Tool xx Persist+1 = H number (integer) from G43Hxx command
+int G43_4(int Tool)
+{
+	return DoPCInt(PC_COMM_G43_4, Tool); // G43.4 + Tool Number
+}
+
+// Do G49 Set Tool Length Comp Off
+int G49(int Tool)
+{
+	return DoPC(PC_COMM_G49); // G49
+}
+
+
+
+#define GATH_OFF 0  // define the offset into the Gather buffer where strings are passed
+
+// Trigger a message box on the PC to be displayed
+// defines for MS Windows message box styles and Operator
+// response IDs are defined in the KMotionDef.h file 
+int MsgBox(char *s, int Flags)
+{
+	char *p=(char *)gather_buffer+GATH_OFF*sizeof(int);
+	
+	do // copy to gather buffer w offset 0
+	{
+		*p++ = *s++;
+	}while (s[-1]);
+	
+	persist.UserData[PC_COMM_PERSIST+2] = Flags;  // set options
+	DoPCInt(PC_COMM_MSG,GATH_OFF);
+	return persist.UserData[PC_COMM_PERSIST+3];
+}
+
+
+// returns both result of communication and if communication
+// successful the User Response;
+int MsgBoxGetResponse(int *response)
+{
+	int result;
+	*response=-1;
+	result=persist.UserData[PC_COMM_PERSIST];
+	if (result==0)
+		*response=persist.UserData[PC_COMM_PERSIST+3];
+
+	return result;
+}
+
+// Trigger a message box on the PC to be displayed
+// defines for MS Windows message box styles and Operator
+// response IDs are defined in the KMotionDef.h file 
+// (Don't wait for response)
+int MsgBoxNoWait(char *s, int Flags)
+{
+	char *p=(char *)gather_buffer+GATH_OFF*sizeof(int);
+	
+	do // copy to gather buffer w offset 0
+	{
+		*p++ = *s++;
+	}while (s[-1]);
+	
+	persist.UserData[PC_COMM_PERSIST+2] = Flags;  // set options
+	DoPCIntNoWait(PC_COMM_MSG,GATH_OFF);
+	return 0;
+}
+
+// Trigger a dialog box on the PC to request a floating point
+// value to be entered by Operator.  returns 1 if the Operator
+// selected cancel.  returns 0 if the operator selected "Set" 
+// Values for the drop down list can be specified as values separated by ';'
+int InputBox(char *s, float *value)
+{
+	char *p = (char *)gather_buffer + GATH_OFF * sizeof(int);
+
+	do // copy to gather buffer w offset 0
+	{
+		*p++ = *s++;
+	} while (s[-1]);
+
+	DoPCInt(PC_COMM_INPUT, GATH_OFF);
+	*value = *(float *)&persist.UserData[PC_COMM_PERSIST + 2];  // return the value
+	return persist.UserData[PC_COMM_PERSIST + 3];
+}
+
+// Execute Screen Script
+int ScreenScript(char *s)
+{
+	char *p = (char *)gather_buffer + GATH_OFF * sizeof(int);
+
+	do // copy to gather buffer w offset 0
+	{
+		*p++ = *s++;
+	} while (s[-1]);
+
+	return DoPCInt(PC_COMM_SCREEN_SCRIPT, GATH_OFF);
+}
+
+
+// Write a string to a DRO Label on the screen.
+// Put the string into the gather buffer at the specified offset (in words)
+// Then place the offset in the specified persist variable
+// KMotionCNC will upload and display the message and then
+// clear the persist variable.
+//
+// in order to avoid any possibility of an unterminated message
+// write the message in reverse so the termination is added first
+
+void DROLabel(int gather_offset, int persist_var, char *s)
+{
+	char *p=(char *)gather_buffer+gather_offset*sizeof(int);
+	int i,n;
+	
+	// first find length of string
+	for (n=0; n<256; n++) if (s[n]==0) break;
+
+	// now copy string backwards
+	for (i=n; i>=0; i--) p[i]=s[i]; 
+	
+	persist.UserData[persist_var] = gather_offset; // set gather offset
+	return;
+}
+	
+// Write a string to an Edit Control on the screen.
+// Put the string into the gather buffer at the specified offset (in words)
+// Then place the negative offset in the specified persist variable
+// Negative offset is used to avoid confusion between reading and writing
+// using the same persist variable.  KMotionCNC will upload and display the message and then
+// clear the persist variable.
+//
+// in order to avoid any possibility of an unterminated message
+// write the message in reverse so the termination is added first
+
+void SetEditControl(int gather_offset, int persist_var, char *s)
+{
+	char *p=(char *)gather_buffer+gather_offset*sizeof(int);
+	int i,n;
+	
+	// first find length of string
+	for (n=0; n<256; n++) if (s[n]==0) break;
+
+	// now copy string backwards
+	for (i=n; i>=0; i--) p[i]=s[i]; 
+	
+	persist.UserData[persist_var] = -gather_offset; // set gather offset
+	return;
+}
+
+// Write a float to a Persist Variable
+
+void WriteVarFloat(int persist_var, float v)
+{
+	float f=v;
+	persist.UserData[persist_var] = *(int *)&f;
+}
+
+
+// Read String from a KMotionCNC Edit Control
+// Persist Var identifies the Control and specifies 
+// where the string data should be placed in the 
+// Gather Buffer as an offset in words
+int GetEditControl(char *s, int Var, int offset)
+{
+	char *p=(char *)gather_buffer+offset*sizeof(int);
+	
+	persist.UserData[Var]=offset;
+	if (DoPCInt(PC_GET_EDIT_CELL,Var)<0)
+	{
+		return -1;
+	}
+	
+	do // copy from gather buffer 
+	{
+		*s++ = *p++;
+	}while (s[-1]);
+	
+	return 0;
+}
+
+// Read String from a KMotionCNC Edit Control and convert to a double
+// Persist Var identifies the Control and specifies 
+// where the string data should be placed in the 
+// Gather Buffer as an offset in words
+int GetEditControlDouble(double *d, int Var, int offset)
+{
+	int result;
+	char s[80];
+	if (GetEditControl(s, Var, offset)) return 1;
+	result = sscanf(s,"%lf",d);
+	if (result!=1) return 1;
+	return 0;
+}
+
+// put the MDI string (Manual Data Input - GCode) in the 
+// gather buffer and tell the App where it is
+int MDI(char *s)
+{
+	char *p=(char *)gather_buffer+GATH_OFF*sizeof(int);
+	
+	do // copy to gather buffer w offset 0
+	{
+		*p++ = *s++;
+	}while (s[-1]);
+	
+	// issue the command an wait till it is complete
+	// (or an error - such as busy)
+	return DoPCInt(PC_COMM_MDI,GATH_OFF);
+}
+
+// Put a Float as a parameter and pass the command to the App
+int DoPCFloat(int cmd, float f)
+{
+	persist.UserData[PC_COMM_PERSIST+1] = *(int*)&f;
+	return DoPC(cmd);
+}
+
+// Put an integer as a parameter and pass the command to the App
+int DoPCInt(int cmd, int i)
+{
+	persist.UserData[PC_COMM_PERSIST+1] = i;
+	return DoPC(cmd);
+}
+
+// Pass a command to the PC and wait for it to handshake
+// that it was received by either clearing the command
+// or changing it to a negative error code
+int DoPC(int cmd)
+{
+	int result;
+	
+	persist.UserData[PC_COMM_PERSIST]=cmd;
+	
+	do
+	{
+		WaitNextTimeSlice();
+		result=persist.UserData[PC_COMM_PERSIST];
+	}while (result>0);
+	
+//	printf("Result = %d\n",result);
+
+	return result;
+}
+
+// Put an integer as a parameter and pass the command to the App
+// (Don't wait for response)
+int DoPCIntNoWait(int cmd, int i)
+{
+	persist.UserData[PC_COMM_PERSIST+1] = i;
+	return DoPCNoWait(cmd);
+}
+
+// Pass a command to the PC and wait for it to handshake
+// that it was received by either clearing the command
+// or changing it to a negative error code
+// (Don't wait for response)
+
+int DoPCNoWait(int cmd)
+{
+	persist.UserData[PC_COMM_PERSIST]=cmd;
+	return 0;
+}
