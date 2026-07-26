@@ -591,13 +591,17 @@ FPGA(STEP_PULSE_LENGTH_ADD)=32 + 0x40 + 0x80;
 				if (chan[i].Enable) DisableAxis(i);
 		}
 
-		// High-speed spindle: force OFF whenever E-stop is pressed OR KMotionCNC
-		// is closed. Bit 156 = VFD enable DAC; bit 157 = spindle E-stop asserted
-		// (SetBit = disabled). WatchdogTripped / WatchdogOK also touch 157 as
-		// one-shot events on KMotionCNC connect/disconnect; the loop below
-		// enforces the state continuously so the KMotionCNC-close case works
-		// even if a G-code M3 was in effect when KMotionCNC exited.
-		if (!EStop || !ControlProgramActive)
+		// High-speed spindle: force OFF whenever the drives are not live -- E-stop
+		// pressed, KMotionCNC closed (!ControlProgramActive), OR the drive-enable
+		// relay (bit 155) OFF. Gating on bit 155 makes the screen STOP button, the
+		// Control Lock (screen or pendant F3), and axis faults stop the HS spindle too,
+		// uniform with the big spindle (Jim 2026-07-26: "the spindle can only be ON
+		// when bit 155 is ON"). Bit 156 = VFD enable; bit 157 = spindle E-stop asserted
+		// (SetBit = disabled). WatchdogTripped / WatchdogOK also touch 157 as one-shot
+		// events on KMotionCNC connect/disconnect; the loop below enforces the state
+		// continuously so the KMotionCNC-close case works even if a G-code M3 was in
+		// effect when KMotionCNC exited.
+		if (!EStop || !ControlProgramActive || !ReadBit(155))
 		{
 			ClearBit(156);
 			SetBit(157);

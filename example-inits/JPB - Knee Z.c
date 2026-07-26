@@ -567,18 +567,20 @@ FPGA(STEP_PULSE_LENGTH_ADD)=32 + 0x40 + 0x80;
 				if (chan[i].Enable) DisableAxis(i);
 		}
 
-		// Big OEM spindle: force OFF on the FALLING EDGE of the safety condition
-		// (E-stop pressed OR KMotionCNC closed). Edge-triggered (2026-07-24) so
-		// a brief transient on either signal doesn't silently kill a spindle
-		// that G-code intentionally started. Prior version fired every loop
-		// iteration while unsafe, which meant one bad iteration killed bit 151
-		// for the remainder of the job -- bit 155 auto-recovers via its own
-		// if/else block when conditions return, but bit 151 has no re-setter.
-		// If !EStop or !ControlProgramActive persists, this fires ONCE at the
-		// transition; the operator restarts the spindle via M3 when safe.
+		// Big OEM spindle: force OFF on the FALLING EDGE of the safety condition,
+		// which is now "drives live" = E-stop OK AND control program active AND the
+		// drive-enable relay (bit 155) ON. So ANY drive-disable -- the screen STOP
+		// button, the Control Lock (screen or pendant F3), E-stop, or an axis fault,
+		// all of which drop bit 155 -- stops the big spindle. It stays off until the
+		// drives are re-enabled and it is restarted with M3. (Jim 2026-07-26: "the
+		// spindle can only be ON when bit 155 is ON.") Edge-triggered (2026-07-24) so
+		// a brief transient can't silently kill a spindle G-code intentionally started;
+		// the speed DAC is left alone so the last commanded speed is retained. (E-stop
+		// still responds this same loop via the EStop term; the bit-155 cases lag one
+		// loop -- bit 155 is set later in the loop -- which is imperceptible.)
 		{
 			static int prevSafe = 1;  // assume safe at init entry (init explicitly turned spindle off)
-			int safe = (EStop && ControlProgramActive);
+			int safe = (EStop && ControlProgramActive && ReadBit(155));
 			if (prevSafe && !safe) {
 				ClearBit(150); ClearBit(151); DAC(7, 0);
 			}
