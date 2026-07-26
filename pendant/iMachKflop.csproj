@@ -42,6 +42,10 @@
          Release64 survive rebuilds (edit pendant.conf + restart, no rebuild). -->
     <Copy SourceFiles="$(MSBuildProjectDirectory)\PendantService.c"
           DestinationFolder="$(KMotionRoot)\KMotion\Release64" />
+    <!-- PendantService.c #includes KflopToKMotionCNCFunctions.c by basename, resolved
+         against its own folder, so the KFLOP-side helper must sit next to it here. -->
+    <Copy SourceFiles="$(MSBuildProjectDirectory)\..\shared\KflopToKMotionCNCFunctions.c"
+          DestinationFolder="$(KMotionRoot)\KMotion\Release64" />
     <Copy SourceFiles="$(MSBuildProjectDirectory)\pendant.conf"
           DestinationFolder="$(KMotionRoot)\KMotion\Release64"
           Condition="!Exists('$(KMotionRoot)\KMotion\Release64\pendant.conf')" />

@@ -124,12 +124,15 @@
 #define TP_HOLD_REQ    56  /* in : init asks for exclusive PC_COMM ownership */
 #define TP_HOLD_ACK    57  /* out: this service granted; init may proceed    */
 
-/* Relative include -- resolved by the KFLOP C compiler against THIS file's folder
- * (pendant/), exactly as the three inits use "../shared/..." from kflop-init/.
- * Removes the machine-specific absolute path so the repo is portable. Verified
- * only when the bridge actually loads this file at connect (the C# build does not
- * compile it). */
-#include "../shared/KflopToKMotionCNCFunctions.c"
+/* Included by BASENAME: the build deploys KflopToKMotionCNCFunctions.c next to this
+ * file (and the exe) in KMotion\Release64, so the KFLOP C compiler resolves it
+ * against THIS file's own folder. A "../shared/..." path does NOT work here -- this
+ * file is deployed away from the repo's shared/ folder, and the compiler does not
+ * search KMotion's "C Programs" for it either (verified at the machine: both failed
+ * to load). (The inits keep "../shared/..." because they compile in place from their
+ * repo folder, not deployed.) The C# build does not compile this file; KFLOP compiles
+ * it when the bridge loads it at connect. */
+#include "KflopToKMotionCNCFunctions.c"
 
 /* Global heartbeat counter (also advanced by MDI_KeepAlive during PC waits). */
 double beat = 0.0;
