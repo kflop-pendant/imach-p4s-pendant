@@ -56,12 +56,14 @@ namespace iMachKflop
         const int UD_GOTOZ_IPMXY = 64;
         const int UD_MACHINE     = 65; // live machine (axes) enable, published by the service
         const int UD_SCREEN_TOGGLE = 66; // screen "Machine Status" button -> bridge: 1 = toggle requested
+        const int UD_WATCH_HB      = 67; // EStopWatch.c liveness heartbeat (bridge verifies at load)
 
         const int CMD_NONE = 0, CMD_EXECUTE = 1, CMD_ESTOP = 2,
                   CMD_HALT = 3, CMD_MCODE = 4, CMD_FRO_INC = 5, CMD_SPINDLE = 6, CMD_SSO = 7, CMD_ZERO = 8, CMD_GOTOZ = 9, CMD_MACHINE = 10;
 
         const int NumChan = 6;
         const int ServiceThread = 7;
+        const int WatchThread   = 5;   // EStopWatch.c -- dedicated E-stop watchdog, nothing else ever here
 
         const int    StatusIntervalMs    = 50;
         const double DestEpsilonCounts   = 3.0;
@@ -69,6 +71,7 @@ namespace iMachKflop
         const int    MotionTailMs        = 250;
         const int    HeartbeatStallLimit = 10;
         const int    ServiceStartMs      = 2000;
+        const int    WatchStartMs        = 2000;
         // Minimum spacing between zeros (fire-and-forget via CMD_ZERO). Blocks a
         // second zero for this long so rapid taps can't flood KMotionCNC.
         const int    ZeroGuardMs         = 300;
@@ -114,6 +117,7 @@ namespace iMachKflop
         KM_Controller      _km;                    // lazily constructed (EnsureController)
         readonly KM_Axis[] _axis = new KM_Axis[NumChan];
         readonly string    _serviceCFile;
+        readonly string    _watchCFile;
         readonly Sel[]     _sel  = new Sel[NumAxes];
 
         bool _kneeOnCh2 = Tune.KneeOnCh2;          // set from the runtime config id in Connect()
@@ -140,9 +144,10 @@ namespace iMachKflop
         public bool ServiceAlive => _heartbeatStalls < HeartbeatStallLimit;
         public bool MachineIdle  => _idleSamples >= IdleSamplesRequired;
 
-        public KflopLink(string serviceCFile)
+        public KflopLink(string serviceCFile, string watchCFile)
         {
             _serviceCFile = serviceCFile;
+            _watchCFile   = watchCFile;
         }
 
         void EnsureController()
@@ -225,6 +230,7 @@ namespace iMachKflop
             for (int ch = 0; ch < NumChan; ch++)
                 _lastDest[ch] = st.GetDestination(ch);
 
+            LaunchWatch();      // dedicated E-stop watchdog on Thread 5 -- bring life-safety up FIRST
             LaunchService();
             Connected = true;
         }
@@ -363,6 +369,31 @@ namespace iMachKflop
                 if (hb != h0) { _lastHeartbeat = hb; return; }
             }
             throw new InvalidOperationException("PendantService did not start (no heartbeat).");
+        }
+
+        // Load the dedicated E-stop watchdog (EStopWatch.c) onto its OWN thread (5),
+        // which nothing else is ever launched onto -- so a running job's M-codes can
+        // never evict it. Twin of LaunchService(): compile+load, then confirm it is
+        // actually executing via its heartbeat before proceeding. Safety-critical, so
+        // a failure to start throws (the bridge will not connect without the watchdog).
+        void LaunchWatch()
+        {
+            if (!File.Exists(_watchCFile))
+                throw new FileNotFoundException("EStopWatch.c not found", _watchCFile);
+
+            double h0 = _km.GetUserDataDouble(UD_WATCH_HB);
+
+            string err = _km.ExecuteProgram(WatchThread, _watchCFile, false);
+            if (!string.IsNullOrEmpty(err))
+                throw new InvalidOperationException("EStopWatch load failed: " + err);
+
+            long t0 = Environment.TickCount;
+            while (Environment.TickCount - t0 < WatchStartMs)
+            {
+                Thread.Sleep(50);
+                if (_km.GetUserDataDouble(UD_WATCH_HB) != h0) return;   // heartbeat moved -> running
+            }
+            throw new InvalidOperationException("EStopWatch did not start (no heartbeat).");
         }
 
         // ---- selection accessors ----------------------------------------------
@@ -634,6 +665,7 @@ namespace iMachKflop
         public void Dispose()
         {
             try { if (Connected) _km.KillProgramThreads(ServiceThread); } catch { }
+            try { if (Connected) _km.KillProgramThreads(WatchThread);   } catch { }
             try { if (_km != null) _km.Dispose(); } catch { }
         }
     }

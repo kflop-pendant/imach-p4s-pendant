@@ -62,16 +62,28 @@ directory at runtime -- you don't place it by hand. KFLOP compiles it when the
 bridge connects; there is no separate build step for it.
 
 > ⚠ **THREAD ASSIGNMENTS ARE LOAD-BEARING — do not reassign them.**
-> `PendantService.c` runs on **thread 7**; the bridge loads it there and stops it
-> with `KillProgramThreads(7)`. The **init programs run on thread 4** when launched
-> from the KMotionCNC screen. These are deliberately different threads so the
-> service and an init can run at once. If you load another C program onto **thread 4
-> or thread 7**, or click-to-load an init while its predecessor's `SetTPParameter`
-> block is still running, you can kill a thread mid-write and leave the trajectory
-> planner half-configured (Z/C counts-per-inch or Vel/Accel stuck at one axis's
-> value). Both symptoms trace back to a thread collision. Keep thread 4 = inits,
-> thread 7 = PendantService, and wait for the "init LOADED" screen cue before
-> loading the next init.
+> Three threads are reserved for long-running programs, each on its own thread so
+> they can all run at once:
+> - **Thread 4 — the active init program** (launched from the KMotionCNC screen).
+> - **Thread 5 — `EStopWatch.c`, the dedicated E-stop watchdog.** The bridge loads
+>   it here and stops it with `KillProgramThreads(5)`. It does nothing but watch the
+>   E-stop and stop motion, so it can never be starved.
+> - **Thread 7 — `PendantService.c`.** The bridge loads it here and stops it with
+>   `KillProgramThreads(7)`.
+>
+> **Never bind any M-code, S-word, or logging program to threads 4, 5, or 7.**
+> KFLOP overwrites whatever already occupies a thread when a new program is loaded
+> onto it. The trap: if a spindle M-code (or any C program a job triggers) is bound
+> to the init's thread, the **first such M-code of a job evicts the init mid-run** —
+> and any E-stop or safety loop living inside that init dies silently with it, so the
+> E-stop stops working *only while a job is running*. That failure mode is exactly
+> why the E-stop watchdog lives alone on its own thread (5). Keep all M-codes,
+> S-words, and loggers on threads **1, 2, 3, or 6**.
+>
+> Separately: click-to-loading an init while its predecessor's `SetTPParameter`
+> block is still running can kill a thread mid-write and leave the trajectory planner
+> half-configured (Z/C counts-per-inch or Vel/Accel stuck at one axis's value). Wait
+> for the "init LOADED" screen cue before loading the next init.
 
 ## 6. Step 4 -- The bridge (iMachKflop)
 - .NET Framework 4.8, x64, LibUsbDotNet. Set `<KMotionRoot>` in

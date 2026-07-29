@@ -52,6 +52,7 @@ hardwired button is the guarantee.
         |  KMotion .NET API
         v
   KFLOP  ............... PendantService.c on thread 7
+                        EStopWatch.c on thread 5 (dedicated E-stop watchdog)
         |  UserData cells (shared memory)
         v
   KMotionCNC  ......... G-code interpreter, DROs, custom screen
@@ -75,12 +76,13 @@ It is *not* usable as a plain HID device by this bridge.
 | `Program.cs` | Entry point. Waits for KMotionCNC to be running, then for an init program to have loaded, before connecting — so it sits quietly instead of flapping if you're just using the PC. Opens the pendant, builds the link, runs the bridge, exits cleanly on a lost KFLOP link **or a lost pendant** (the input watchdog). Loads `PendantService.c` and `pendant.conf` **from its own directory** (the build deploys both there), so no machine-specific paths are compiled in. |
 | `Pendant.cs` | USB transport and protocol. The 8-byte input report (buttons, mode bits, MPG wheel) and the 19-byte LCD output frame, including the activity counter the firmware needs to treat each frame as new. The byte map was reverse-engineered and hardware-validated. |
 | `Bridge.cs` | The main loop and all the behaviour. Axis selection (the three buttons each toggle a *pair*), mode selection, jogging (step / velocity / continuous), the hold-then-EN command grammar, LCD line composition, the machine-idle gate, and servicing of the custom-screen toggle. |
-| `KflopLink.cs` | Everything that touches the KFLOP: the UserData memory map, command posting, DRO reads, jog and step math per axis, the `MachineIdle` detector, and loading `PendantService.c` onto thread 7. |
+| `KflopLink.cs` | Everything that touches the KFLOP: the UserData memory map, command posting, DRO reads, jog and step math per axis, the `MachineIdle` detector, and loading `EStopWatch.c` onto thread 5 and `PendantService.c` onto thread 7. |
 | `pendant.conf` | **The file you tune.** A plain `key = value` text file of the speed/feel values — IPM caps, jog/step accels, step sizes, velocity/continuous tuning, half-speed, GOTOZ feeds, spindle-override range, DRO decimals. **Edit it and restart the bridge — no rebuild.** It is loaded from the exe's directory and validated at startup; a missing/malformed/out-of-range/unknown key makes the bridge refuse to start (`CONFIG/ERR` on the LCD, the offending key named on the console) rather than guess a speed. |
 | `Tune.cs` | The compiled config: the *structural* and *measured* settings that don't change at runtime — per-axis table (counts/unit, channel, enable flag, rotary flag), the counts-per-inch machine facts, per-mode and per-button enable tables, gate/watchdog timings, every LCD string, and the auto-start flag. Speed/feel numbers moved out to `pendant.conf`; Tune holds the shipped defaults and everything not meant to be hand-tuned. |
 | `TuneConfig.cs` | Loads and strictly validates `pendant.conf` into `Tune` at startup — fail-loud, no silent fallback to defaults, every applied value echoed to the console. |
 | `PendantService.c` | The KFLOP-side half. Runs as a C program on thread 7: publishes the DROs and the axis-enable state into UserData every loop, executes commands the bridge posts (zero, go-to-zero, spindle, overrides, control lock), keeps a heartbeat so the link watchdog doesn't false-trip, and writes the custom-screen status labels. Deployed next to the exe by the build. |
-| `iMachKflop.csproj` | .NET Framework 4.8, x64. Builds to the KMotion `Release64` folder and deploys `PendantService.c` + `pendant.conf` alongside the exe. |
+| `EStopWatch.c` | The dedicated hardware-E-stop watchdog. Runs alone on thread 5 (nothing else is ever launched there) so a running job can never evict it. It does one thing: watch the E-stop input and, while it is asserted, stop coordinated motion immediately, drop the drives, and raise the flag `PendantService.c` relays to a KMotionCNC Halt. Self-contained (`KMotionDef.h` only); deployed next to the exe by the build and loaded by the bridge. |
+| `iMachKflop.csproj` | .NET Framework 4.8, x64. Builds to the KMotion `Release64` folder and deploys `PendantService.c` + `EStopWatch.c` + `pendant.conf` alongside the exe. |
 
 ### Auto-start — `pendant/autostart/`
 

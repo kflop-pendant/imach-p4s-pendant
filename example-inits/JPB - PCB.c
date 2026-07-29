@@ -2,6 +2,8 @@
 #define TMP 10
 #include "../shared/KflopToKMotionCNCFunctions.c"
 
+#define UD_ESTOP_REQ 59		// double-index UserData: init raises on hardware E-stop (bit 143); PendantService relays to DoPC(PC_COMM_ESTOP)
+
 // Defines KFLOP channels 0-4 as axes X-C
 // Disables and Zeros all axes
 // Defines axis parameters
@@ -579,14 +581,27 @@ FPGA(STEP_PULSE_LENGTH_ADD)=32 + 0x40 + 0x80;
 			ClearBit(155);		// Disables stepper drivers if ANY axis is disabled
 		}
 
+		// Mechanical E-stop chain (bit 143 low = pressed). Fix per Tom Kerekes'
+		// 2026-07-27 review: the axes were only ever stopping as a following-error
+		// side effect, and DisableAxis() alone does NOT abort a running COORDINATED
+		// (G-code) move -- so motion continued while the spindle (cut in hardware)
+		// stopped. Two parts, both required:
+		//   1. KFLOP-side, level every pass while held: StopCoordinatedMotion() halts
+		//      the trajectory now and the DisableAxis() loop drops the drives (bit 155
+		//      follows). No hardware stepper-drive cut on this machine, so motion must
+		//      stop in software; this also holds during the ~100 ms the KMotionCNC-side
+		//      E-stop takes to land, and covers the pendant-service-not-running case.
+		//   2. KMotionCNC-side: raise UD_ESTOP_REQ; PendantService.c -- the single
+		//      PC_COMM owner -- edge-relays it to DoPC(PC_COMM_ESTOP). The init must NOT
+		//      call DoPC itself (it would race the service's PC_COMM traffic, and stock
+		//      DoPC has no timeout and would wedge this loop if KMotionCNC died).
+		// Open-loop A has no following-error protection: DisableAxis is its only stop and
+		// steps in the ms before this pass are lost -- re-zero A after any E-stop.
+		SetUserDataDouble(UD_ESTOP_REQ, (double)(!EStop));	// backup relay when this init is alive (EStopWatch on T5 is primary)
+
 		if (!EStop)
 		{
-			// Stop KFLOP commanding motion. Deliberate -- NOT a following-error
-			// side effect -- so it also covers the open-loop A axis, which can
-			// never trip that protection. Portable: no machine-specific bits here.
-			// The loop below clears bit 155 once the enables drop, so the drive
-			// relay follows on its own. Re-enable via Control Lock or init reload.
-			// NOTE: A is open loop -- its position is unreliable after any E-stop.
+			StopCoordinatedMotion();			// stop the G-code trajectory NOW (KFLOP-side, no mailbox)
 			for (i = 0; i < 6; i++)
 				if (chan[i].Enable) DisableAxis(i);
 		}

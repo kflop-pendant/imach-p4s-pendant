@@ -45,6 +45,7 @@ namespace iMachKflop
         // seeds it only if absent, so your edits survive rebuilds).
         static readonly string AppDir      = AppDomain.CurrentDomain.BaseDirectory;
         static readonly string ServiceCFile = Path.Combine(AppDir, "PendantService.c");
+        static readonly string WatchCFile   = Path.Combine(AppDir, "EStopWatch.c");
         static readonly string ConfigFile   = Path.Combine(AppDir, "pendant.conf");
 
         static volatile int    _ledByte = 0;
@@ -96,7 +97,7 @@ namespace iMachKflop
                     return;
                 }
 
-                using (var kflop = new KflopLink(ServiceCFile))
+                using (var kflop = new KflopLink(ServiceCFile, WatchCFile))
                 {
                     int configId = WaitForKflopAndInit(pendant, kflop);
                     if (configId == 0) return;                 // Ctrl+C during the wait

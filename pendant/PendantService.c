@@ -123,6 +123,7 @@
  */
 #define TP_HOLD_REQ    56  /* in : init asks for exclusive PC_COMM ownership */
 #define TP_HOLD_ACK    57  /* out: this service granted; init may proceed    */
+#define UD_ESTOP_REQ   59  /* in : init raises while hardware E-stop (bit 143) is asserted; edge-relayed to DoPC(PC_COMM_ESTOP) */
 
 /* Included by BASENAME: the build deploys KflopToKMotionCNCFunctions.c next to this
  * file (and the exe) in KMotion\Release64, so the KFLOP C compiler resolves it
@@ -251,6 +252,31 @@ main()
                 SetUserDataDouble(UD_HEARTBEAT, beat);
             }
             SetUserDataDouble(TP_HOLD_ACK, 0.0);
+        }
+
+        /* Mechanical E-stop relay (Tom Kerekes 2026-07-27). The dedicated E-stop
+         * watchdog (EStopWatch.c, Thread 5) raises UD_ESTOP_REQ while the hardware
+         * E-stop chain (bit 143) is open. This service is the single PC_COMM owner,
+         * so IT -- not the watchdog -- issues the DoPC, which avoids a mailbox race.
+         * Edge-relay: fire the interpreter Halt once per assertion, via the hang-safe
+         * wrapper (raw DoPC wedges once KMotionCNC enters its own E-stop state). The
+         * watchdog already stopped the trajectory (StopCoordinatedMotion) and dropped
+         * the drives. */
+        {
+            static int prevEstopReq = 0;
+            int estopReq = (int)GetUserDataDouble(UD_ESTOP_REQ);
+            if (estopReq && !prevEstopReq)
+            {
+                /* PC_COMM_HALT, not PC_COMM_ESTOP. Jim's own bench note: PC_COMM_ESTOP
+                 * locks up KMotionCNC during a running job -- UI freezes, close + init
+                 * reload to recover. HALT is the safe path the STOP button uses, and it
+                 * halts the interpreter so it stops feeding motion. Pairs with the
+                 * watchdog's StopCoordinatedMotion(). (Tom's FORUM door-switch pattern
+                 * is StopCoordinatedMotion + HALT; his email said ESTOP -- HALT is what
+                 * actually works here.) */
+                DoPC_KeepAlive(PC_COMM_HALT);
+            }
+            prevEstopReq = estopReq;
         }
 
         /* 1 + 2. publish live work DROs and active fixture.
