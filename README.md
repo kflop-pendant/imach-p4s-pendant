@@ -131,3 +131,13 @@ pendants are welcome.
 - Bridge, `PendantService.c`, and the integration: **© 2026 Jim Barad**, MIT license (see [`LICENSE`](LICENSE)).
 - `shared/KflopToKMotionCNCFunctions.c` is **Dynomotion's**, redistributed with permission; copyright remains Dynomotion's.
 - Behavior follows **VistaCNC's P4-S LinuxCNC manual** (download link in [pendant/docs/manuals/README.md](pendant/docs/manuals/README.md)); the manual itself is not redistributed here.
+
+---
+
+## Trademarks & affiliation
+
+This is an independent, community project. It is **not affiliated with, endorsed by, or
+sponsored by VistaCNC or Dynomotion, Inc.** "iMach" and "P4-S" are trademarks or registered
+trademarks of VistaCNC; "KFLOP," "Kanalog," and "KMotionCNC" are trademarks or registered
+trademarks of Dynomotion, Inc. These names are used only to identify the hardware and
+software this project interoperates with.
