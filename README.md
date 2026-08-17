@@ -69,8 +69,60 @@ Full step-by-step: [pendant/docs/INSTALL_GUIDE.md](pendant/docs/INSTALL_GUIDE.md
 - [pendant/docs/KEYMAP.md](pendant/docs/KEYMAP.md) — the authoritative USB report / button-bitmap decode (adapt this for a different pendant).
 - [pendant/docs/INSTALL_GUIDE.md](pendant/docs/INSTALL_GUIDE.md) — setup from firmware flash to first run.
 
-Adapting to a different pendant: `iMachKflop.exe --btnmap` and `--ledmap` map the raw
-report and the LCD indicator with no KFLOP/machine power needed.
+---
+
+## Using a different pendant
+
+This project is a **Windows-side bridge that reads a USB pendant's raw input reports and
+drives KFLOP** through the KMotion .NET API. Whether another pendant can be adapted comes
+down to one question: *does it plug into the PC as a USB device whose buttons and handwheel
+(MPG) can be read — and, optionally, a display you can write to?*
+
+**Should be adaptable (tinkerer territory).** Only the device layer —
+[`pendant/Pendant.cs`](pendant/Pendant.cs) (~140 lines) — has to change; the KFLOP motion,
+jog math, and E-stop logic are untouched.
+
+- **Other VistaCNC iMach USB pendants.** The **P4-S** is this same pendant without the
+  external E-stop (EE) box and should be close to a drop-in; the **P2-S, P1A-S, P1A, and
+  P3A** share the same USB family and need button/axis remapping and display tweaks.
+- **Generic USB-HID jog pendants** with an MPG wheel and buttons.
+- **DIY USB devices you build** (ESP32 / Arduino / "CYD" touchscreen), where you own the
+  firmware and can emit reports the bridge reads — or feed a graphical UI.
+
+Two built-in helpers make the remap easy, with no KFLOP or machine power needed:
+`iMachKflop.exe --btnmap` decodes the raw input report / button bitmap, and `--ledmap` maps
+the LCD indicator. See [pendant/docs/KEYMAP.md](pendant/docs/KEYMAP.md) for the authoritative
+P4-SE decode to adapt from.
+
+**Will *not* work without a from-scratch effort.**
+
+- **Standalone "smart" pendants that are their own controller** and talk serial/UART or
+  Ethernet to a non-KFLOP motion system — e.g. the
+  [Devtronic SmartPendant](https://github.com/Devtronic-US/SmartPendant), an STM32
+  touchscreen unit built for grblHAL over UART. These never appear to the PC as a jog
+  device; adapting one means reflashing the pendant's own firmware — a different project.
+- **Wired / parallel MPG handwheels** that connect their encoder and selector switches
+  straight into a breakout board or the KFLOP/Kanalog I/O as electrical signals. They don't
+  use USB and don't need this bridge at all — KFLOP jogs from them natively with a small
+  KFLOP C program.
+- **Wireless pendants with proprietary RF dongles**, unless the dongle enumerates as a
+  standard USB HID.
+
+**Rule of thumb:** if the pendant plugs into your *PC* and you can read its buttons/wheel as
+USB data, you can probably adapt this. If it plugs into your *motion controller* — or wires
+straight into I/O — you can't; it's playing a different role entirely.
+
+**Where to start in the code.** The bridge talks to the device through a small contract in
+[`pendant/Pendant.cs`](pendant/Pendant.cs): `Read()` returns a `PendantInput` (semantic
+controls — E-stop, spindle, start/stop, the axis-pair buttons, jog modes, and an MPG delta),
+and `WriteLcd(line1, line2, indicator)` drives the display. Everything downstream
+([`pendant/Bridge.cs`](pendant/Bridge.cs)) is written against those, not raw bytes —
+reimplement them for your device and the rest follows. To support several pendants cleanly,
+extract an `IPendant` interface (`Open` / `Read→PendantInput` / `MpgDelta` / `WriteLcd` /
+`Dispose`) and have `Bridge` depend on it; then a new pendant is a drop-in class rather than
+a fork. A graphical (touchscreen) device also wants the display generalized from "two text
+lines" to a small view-model (DRO, mode, axis, indicator). Contributions adding other
+pendants are welcome.
 
 ---
 
