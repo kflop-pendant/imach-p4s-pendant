@@ -24,22 +24,28 @@
  * LaunchWatch, twin of the PendantService load on Thread 7), and then runs
  * autonomously on the KFLOP even if the PC/bridge later dies.
  *
- * TWO HALVES OF THE STOP (both required):
- *   1. StopCoordinatedMotion() -- board-side. Brings the G-code trajectory
- *      to an emergency stop ASAP. Called every pass WHILE HELD so that even
- *      if the PC interpreter feeds another segment before it is halted, the
- *      new motion is re-killed immediately. DisableAxis + drop the
- *      drive-enable relay (bit 155) make-safe the drives, matching what the
- *      init does when it is alive.
- *   2. UD_ESTOP_REQ (var 59) -- PendantService.c on Thread 7 (also never
- *      evicted, the single PC_COMM owner) edge-relays this to
- *      DoPC(PC_COMM_HALT), which aborts the KMotionCNC interpreter so it
- *      stops feeding motion. StopCoordinatedMotion alone canNOT stop the PC
- *      interpreter -- only PC_COMM_HALT does.
+ * HOW IT STOPS (Tom Kerekes, 2026-08 -- the supported, clean way):
+ *   PRIMARY -- DISABLE THE AXES. While a job runs, KMotionCNC continuously
+ *   polls the board and self-aborts the instant any axis is disabled, reporting
+ *   "Axis Disabled" (exactly what the screen Emergency Stop does). Motion output
+ *   dies immediately, KMotionCNC aborts itself cleanly, there is nothing to
+ *   Cancel, no PC_COMM traffic is involved, and it works with any number of
+ *   clients connected. So on E-stop we DisableAxis() the enabled axes, drop the
+ *   drive-enable relay (bit 155), and turn both spindles off.
  *
- * The machine inits keep their own E-stop block as a redundant backup for
- * when they happen to be alive (idle, no job); this watcher is the primary
- * and is the one that survives a running job.
+ *   NOT StopCoordinatedMotion() -- despite the name it is a FEEDHOLD (a
+ *   resumable pause). Feedholding the buffer mid-job left KMotionCNC monitoring
+ *   motion that stopped without its knowledge -> "Unexpected Coordinated Motion
+ *   Buffer Underflow" and a stuck feed-hold you had to Cancel out of. Removed.
+ *
+ *   BELT-AND-SUSPENDERS -- UD_ESTOP_REQ (var 59) still goes high while held, and
+ *   PendantService.c (Thread 7, the single PC_COMM owner) edge-relays it to a
+ *   KMotionCNC Halt. Optional now that disable-axes is the primary abort, but
+ *   harmless (KMotionCNC-managed, so no underflow) and kept as a second path.
+ *
+ * The machine inits keep their own E-stop block (DisableAxis + the same flag) as
+ * a redundant backup for when they are alive; this watcher is the primary and
+ * the one that survives a running job.
  *
  * Self-contained: needs only KMotionDef.h (no shared helper, no TMP/scratch).
  * ---------------------------------------------------------------------- */
@@ -70,12 +76,18 @@ main()
 
         if (!ReadBit(ESTOP_BIT))                /* E-stop pressed (chain open) */
         {
-            StopCoordinatedMotion();            /* #1 stop the G-code trajectory NOW */
-            SET_UD(UD_ESTOP_REQ, 1.0);          /* #2 -> PendantService -> PC_COMM_HALT */
-
-            ClearBit(DRIVE_EN_BIT);             /* drop the drive-enable relay */
+            /* PRIMARY abort: disable the axes. KMotionCNC's poll sees this and
+             * self-aborts the running job ("Axis Disabled") -- clean, no Cancel. */
             for (i = 0; i < 6; i++)
                 if (chan[i].Enable) DisableAxis(i);
+
+            ClearBit(DRIVE_EN_BIT);             /* drop the stepper drive-enable relay */
+
+            /* Both spindles OFF (matches the init's power-on safe state). */
+            ClearBit(150); ClearBit(151); DAC(7, 0);   /* big OEM spindle */
+            ClearBit(156); DAC(5, 0);                  /* high-speed spindle */
+
+            SET_UD(UD_ESTOP_REQ, 1.0);          /* belt-and-suspenders -> PendantService -> Halt */
         }
         else
         {

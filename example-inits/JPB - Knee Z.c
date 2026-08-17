@@ -557,29 +557,21 @@ FPGA(STEP_PULSE_LENGTH_ADD)=32 + 0x40 + 0x80;
 
 		EStop = ReadBit(143);		// 24V E-stop chain -- LOW = pressed
 
-		// Mechanical E-stop chain (bit 143 low = pressed). Fix per Tom Kerekes'
-		// 2026-07-27 review: the axes were only ever stopping as a following-error
-		// side effect, and DisableAxis() alone does NOT abort a running COORDINATED
-		// (G-code) move -- so motion continued while the spindle (cut in hardware)
-		// stopped. Two parts, both required:
-		//   1. KFLOP-side, level every pass while held: StopCoordinatedMotion() halts
-		//      the trajectory now and the DisableAxis() loop drops the drives (bit 155
-		//      follows). No hardware stepper-drive cut on this machine, so motion must
-		//      stop in software; this also holds during the ~100 ms the KMotionCNC-side
-		//      E-stop takes to land, and covers the pendant-service-not-running case.
-		//   2. KMotionCNC-side: raise UD_ESTOP_REQ; PendantService.c -- the single
-		//      PC_COMM owner -- edge-relays it to DoPC(PC_COMM_ESTOP). The init must NOT
-		//      call DoPC itself (it would race the service's PC_COMM traffic, and stock
-		//      DoPC has no timeout and would wedge this loop if KMotionCNC died).
-		// Open-loop A has no following-error protection: DisableAxis is its only stop and
-		// steps in the ms before this pass are lost -- re-zero A after any E-stop.
-		SetUserDataDouble(UD_ESTOP_REQ, (double)(!EStop));	// backup relay when this init is alive (EStopWatch on T5 is primary)
+		// Mechanical E-stop chain (bit 143 low = pressed). BACKUP path for when
+		// this init is alive; EStopWatch.c on Thread 5 is the primary, un-evictable
+		// watcher. Abort per Tom Kerekes (2026-08): DISABLE THE AXES -- while a job
+		// runs KMotionCNC polls the board and self-aborts the instant any axis is
+		// disabled ("Axis Disabled"), the same way the screen E-stop does. NOT
+		// StopCoordinatedMotion(): despite the name it is a feedhold (resumable
+		// pause) and left KMotionCNC with a buffer underflow / stuck feed-hold.
+		// Open-loop A has no following-error protection and can lose steps on an
+		// abrupt stop -- re-zero A after any E-stop.
+		SetUserDataDouble(UD_ESTOP_REQ, (double)(!EStop));	// belt-and-suspenders Halt relay (EStopWatch on T5 is primary)
 
 		if (!EStop)
 		{
-			StopCoordinatedMotion();			// stop the G-code trajectory NOW (KFLOP-side, no mailbox)
 			for (i = 0; i < 6; i++)
-				if (chan[i].Enable) DisableAxis(i);
+				if (chan[i].Enable) DisableAxis(i);	// disable axes -> KMotionCNC self-aborts ("Axis Disabled")
 		}
 
 		// Big OEM spindle: force OFF on the FALLING EDGE of the safety condition,
