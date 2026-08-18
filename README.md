@@ -1,8 +1,12 @@
 # iMach P4-S → KFLOP / KMotionCNC Pendant Bridge
 
-Use your **VistaCNC iMach III P4-S USB pendant** with **KMotionCNC** on a **Dynomotion
-KFLOP** — a drop-in replacement for the Mach3 plugin the pendant ships with. A small
-Windows app (the "bridge") relays the pendant to your machine; you run it, no coding required.
+Run a **VistaCNC iMach III P4-S USB pendant** with **KMotionCNC** on a **Dynomotion KFLOP**. A
+small Windows app (the "bridge") relays the pendant to your machine — you run it, no coding required.
+
+**Getting the pendant:** buy it in the **LinuxCNC firmware** (recommended), or reflash an existing
+Mach3-firmware unit — a few minutes, and the [Quick start](#quick-start) walks through the firmware
+and driver setup either way. This bridge is what lets the pendant drive KMotionCNC — the job the
+stock Mach3 plugin can't do.
 
 The pendant becomes a first-class control device on a KFLOP machine: step / velocity /
 continuous jogging on the MPG wheel, feed & spindle overrides, work-offset zero,
@@ -19,8 +23,14 @@ steppers, switchable knee/quill on Z, open-loop rotary A).
 ## Why bother?
 
 The iMach P4-S is a **professional-grade pendant** — its fit, feel, and build quality rival the
-pendants bolted to industrial machines costing many times more. But its stock plugin only speaks
-to **Mach3**. If you'd rather run your KFLOP under **KMotionCNC** — Dynomotion's own G-code front
+handhelds on industrial machines costing many times more: tactile keys, a backlit display, and a
+housing that shrugs off coolant and the odd drop onto concrete. I chose it over a flashier
+touchscreen because glass and gloves, coolant and chips don't mix — a touch display won't survive a
+shop the way physical keys do. Those were *my* priorities, though; yours may differ, and that's the
+point of an open project: pick the pendant that fits your shop, not whatever a proprietary controller
+locks you into.
+
+The catch: the pendant's stock plugin only speaks to **Mach3**. If you'd rather run your KFLOP under **KMotionCNC** — Dynomotion's own G-code front
 end — you've had to give the pendant up. This bridge removes that trade-off: keep the pendant *and*
 run KMotionCNC.
 
@@ -143,8 +153,15 @@ reimplement them for your device and the rest follows. To support several pendan
 extract an `IPendant` interface (`Open` / `Read→PendantInput` / `MpgDelta` / `WriteLcd` /
 `Dispose`) and have `Bridge` depend on it; then a new pendant is a drop-in class rather than
 a fork. A graphical (touchscreen) device also wants the display generalized from "two text
-lines" to a small view-model (DRO, mode, axis, indicator). Contributions adding other
-pendants are welcome.
+lines" to a small view-model (DRO, mode, axis, indicator).
+
+**A word on support.** I built this for my own machine and I'm glad to share it — but I'm not set up
+to run a help desk. I have a shop and a life outside it, I make nothing from this, and I can't take
+on adapting the bridge to other hardware or walking anyone through the changes above. Questions may
+get a slow reply, or none at all — please don't take it to heart; it's a time thing, not a goodwill
+thing. The code is MIT-licensed and documented in depth for exactly this reason: so you can take it
+and run without me. Well-scoped **pull requests** are the exception — those are genuinely welcome,
+and the best way to get a change in.
 
 ---
 
