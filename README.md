@@ -1,8 +1,8 @@
 # iMach P4-S → KFLOP / KMotionCNC Pendant Bridge
 
-A working bridge that drives a **VistaCNC iMach III P4-S USB pendant** against a
-**Dynomotion KFLOP** running under **KMotionCNC** — a drop-in replacement for the
-Mach3 plugin the pendant ships with.
+Use your **VistaCNC iMach III P4-S USB pendant** with **KMotionCNC** on a **Dynomotion
+KFLOP** — a drop-in replacement for the Mach3 plugin the pendant ships with. A small
+Windows app (the "bridge") relays the pendant to your machine; you run it, no coding required.
 
 The pendant becomes a first-class control device on a KFLOP machine: step / velocity /
 continuous jogging on the MPG wheel, feed & spindle overrides, work-offset zero,
@@ -50,9 +50,15 @@ Both `pendant/PendantService.c` and the inits `#include "../shared/..."`, so kee
 1. **Pendant firmware + driver.** Flash the pendant to the LinuxCNC firmware (FW v200) and
    put it on the **WinUSB** driver with Zadig. (It will no longer work with the Mach3
    plugin until you switch back.)
-2. **Build.** Point `<KMotionRoot>` in `pendant/iMachKflop.csproj` at your KMotion install,
-   then `dotnet build`. The build deploys the exe + `PendantService.c` + `pendant.conf`
-   into `<KMotion>\KMotion\Release64`; the bridge loads the last two from its own folder.
+2. **Get the bridge — pick one:**
+   - **Download & run (no building).** Grab the latest zip from the [Releases](../../releases)
+     page and extract its contents into your `<KMotion>\KMotion\Release64` folder. No .NET SDK,
+     no compiling — this is the path for most users.
+   - **Build from source** *(tinkerers / contributors)*. Point `<KMotionRoot>` in
+     `pendant/iMachKflop.csproj` at your KMotion install, then `dotnet build`. The build deploys
+     the exe + `PendantService.c` + `EStopWatch.c` + `pendant.conf` into
+     `<KMotion>\KMotion\Release64`; the bridge loads them from that folder. See
+     [RELEASING.md](RELEASING.md) if you're packaging a release.
 3. **Init contract.** Have your KFLOP init publish `UserData 54` (config id) and, optionally,
    `UserData 58` (init identity) — see [`example-inits/README.md`](example-inits/README.md).
 4. **Run.** Register the logon task with `pendant/autostart/install-pendant-task.ps1`, or run
