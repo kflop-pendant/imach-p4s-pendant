@@ -16,6 +16,22 @@ steppers, switchable knee/quill on Z, open-loop rotary A).
 
 ---
 
+## Why bother?
+
+The iMach P4-S is a **professional-grade pendant** — its fit, feel, and build quality rival the
+pendants bolted to industrial machines costing many times more. But its stock plugin only speaks
+to **Mach3**. If you'd rather run your KFLOP under **KMotionCNC** — Dynomotion's own G-code front
+end — you've had to give the pendant up. This bridge removes that trade-off: keep the pendant *and*
+run KMotionCNC.
+
+And KMotionCNC is worth moving to: motion is planned and executed in real time on the KFLOP's
+dedicated DSP — not on PC timing — with a **3rd-order, jerk-limited (S-curve) trajectory planner**,
+multi-segment **look-ahead**, break-angle corner rounding, and optional path smoothing across up to
+8 coordinated axes. It's also **actively developed and steadily gaining features** — where Mach3,
+capable and mature as it is, is no longer being advanced.
+
+---
+
 ## ⚠ Safety — read before you rely on this
 
 **The pendant E-stop is not automatically a hardware E-stop.** On a plain P4-S it is
