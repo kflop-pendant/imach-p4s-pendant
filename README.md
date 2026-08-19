@@ -79,7 +79,9 @@ Both `pendant/PendantService.c` and the inits `#include "../shared/..."`, so kee
 2. **Get the bridge — pick one:**
    - **Download & run (no building).** Grab the latest zip from the [Releases](../../releases)
      page and extract its contents into your `<KMotion>\KMotion\Release64` folder. No .NET SDK,
-     no compiling — this is the path for most users.
+     no compiling — this is the path for most users. *Windows may flag the download (it's an
+     unsigned open-source app): right-click the downloaded zip → **Properties → Unblock** before
+     extracting, or click **More info → Run anyway** on the SmartScreen prompt.*
    - **Build from source** *(tinkerers / contributors)*. Point `<KMotionRoot>` in
      `pendant/iMachKflop.csproj` at your KMotion install, then `dotnet build`. The build deploys
      the exe + `PendantService.c` + `EStopWatch.c` + `pendant.conf` into
