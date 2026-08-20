@@ -1,5 +1,9 @@
 # iMach P4-S → KFLOP / KMotionCNC Pendant Bridge
 
+> ⚠️ **Update KMotion first.** This bridge relies on KFLOP/KMotionCNC fixes that ship in the
+> latest KMotion release — **install/update to the current KMotion before loading the pendant
+> code.** An older KMotion will not work correctly.
+
 Run a **VistaCNC iMach III P4-S USB pendant** with **KMotionCNC** on a **Dynomotion KFLOP**. A
 small Windows app (the "bridge") relays the pendant to your machine — you run it, no coding required.
 
@@ -157,13 +161,12 @@ extract an `IPendant` interface (`Open` / `Read→PendantInput` / `MpgDelta` / `
 a fork. A graphical (touchscreen) device also wants the display generalized from "two text
 lines" to a small view-model (DRO, mode, axis, indicator).
 
-**A word on support.** I built this for my own machine and I'm glad to share it — but I'm not set up
-to run a help desk. I have a shop and a life outside it, I make nothing from this, and I can't take
-on adapting the bridge to other hardware or walking anyone through the changes above. Questions may
-get a slow reply, or none at all — please don't take it to heart; it's a time thing, not a goodwill
-thing. The code is MIT-licensed and documented in depth for exactly this reason: so you can take it
-and run without me. Well-scoped **pull requests** are the exception — those are genuinely welcome,
-and the best way to get a change in.
+**A word on support.** I'm glad to help where I can — just know that response times may vary quite a
+bit, since machining and this pendant project are hobbies for me, not a business. The code is
+MIT-licensed and documented in depth so you can get a long way on your own, and well-scoped **pull
+requests** are always welcome (often the quickest path to a fix). Adapting the bridge to your
+specific hardware is largely a do-it-yourself affair, but I'll do my best to point you in the right
+direction when time allows.
 
 ---
 
