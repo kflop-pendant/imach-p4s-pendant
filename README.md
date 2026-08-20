@@ -107,6 +107,10 @@ Full step-by-step: [pendant/docs/INSTALL_GUIDE.md](pendant/docs/INSTALL_GUIDE.md
 - [pendant/docs/KEYMAP.md](pendant/docs/KEYMAP.md) — the authoritative USB report / button-bitmap decode (adapt this for a different pendant).
 - [pendant/docs/INSTALL_GUIDE.md](pendant/docs/INSTALL_GUIDE.md) — setup from firmware flash to first run.
 
+**Getting help:** for a question or a bug, open a [GitHub issue](../../issues) (a quick search first
+saves duplicates). It's the best way to reach me — and public, so the answer helps the next person.
+See *A word on support* below for what to expect on response times.
+
 ---
 
 ## Using a different pendant
