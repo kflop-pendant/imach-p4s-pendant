@@ -26,7 +26,8 @@ process runs the G-code interpreter (work offsets, tool table, DROs).
 
 ## 2. Prerequisites
 - VistaCNC iMach III P4-S pendant
-- KFLOP (with Kanalog, if used) running under KMotionCNC
+- KFLOP (with Kanalog, if used) running under **KMotionCNC 5.4.4 or newer** (earlier
+  versions lack the trajectory-planner SET/GET fix the init relies on)
 - The Windows PC that runs your CNC software (the machine PC). The original
   conversion was flashed and driven from a Windows 11 machine PC.
 - Downloads: VistaCNC "LinuxCNC P4-S Driver + Installation Package v1.20"
@@ -96,6 +97,16 @@ bridge connects; there is no separate build step for it.
   with `autostart\install-pendant-task.ps1`), gated so it waits for KMotionCNC to
   be running before it connects.
 
+### Download & run (no building)
+Most users skip the build: download the latest zip from the repo's **Releases** page and extract its
+contents into `<KMotion>\KMotion\Release64`. Two prompts to expect:
+- **During extraction:** Windows asks to replace **`KflopToKMotionCNCFunctions.c`** — click
+  **Replace**. It's Dynomotion's helper (ships with KMotion, and is in the zip too); the copies are
+  identical, so replacing is correct.
+- **On first launch — SmartScreen:** the exe is unsigned open-source, so Windows may show *"Windows
+  protected your PC."* Click **More info** first — *then* the **Run anyway** button appears. (To skip
+  this, right-click the downloaded zip → **Properties → Unblock** before extracting.)
+
 ## 6a. Tuning -- pendant.conf (no rebuild)
 Speed/feel values (IPM caps, jog/step accels, step sizes, velocity/continuous
 tuning, half-speed, GOTOZ feeds, spindle-override range, DRO decimals) live in
@@ -108,11 +119,36 @@ speed. The build seeds `pendant.conf` only if it isn't already next to the exe, 
 your edits survive rebuilds. **None of the shipped numbers will match your
 machine** -- set counts-per-inch in `Tune.cs` and speeds/accels in `pendant.conf`.
 
-## 7. Step 5 -- First-run verification
-1. Start KMotionCNC and home the machine as normal.
-2. The pendant LCD should come alive (leaving the "LinuxCNC----" idle screen).
-3. Confirm MPG jog, axis select, and mode select.
-4. Confirm the function buttons per the manual grammar (HOLD the function key, tap EN).
+## 7. Step 5 -- First run
+The pendant comes alive only when **all three** of these are up (order doesn't matter):
+1. **The bridge is running** — the "PendantBridge" task auto-starts it at logon, or launch it
+   manually (`bridge-control.ps1 -Action Console`, or double-click `iMachKflop.exe`).
+2. **KMotionCNC is running** (and the machine homed as normal).
+3. **An init is loaded** — click your init button on the KMotionCNC screen; it publishes the
+   `UserData 54` contract the bridge waits for.
+
+Watch the pendant LCD move through these stages, so you always know where you are:
+- **`LinuxCNC`** — the firmware's idle screen; the bridge isn't driving the pendant yet (it's not
+  running, or the KFLOP isn't present).
+- **waiting for KMotionCNC** — the bridge is up and waiting for the KMotionCNC process.
+- **waiting for an init** — KMotionCNC is up; load an init.
+- **live DRO** — connected and operational.
+
+Then confirm MPG jog, axis/mode select, and the function buttons per the manual grammar (HOLD the
+function key, tap EN).
+
+## 7a. Updating KMotion later (don't skip this)
+KMotion installs **each version to its own folder** (e.g. `C:\KMotion5.4.5\`). A fresh install has
+**none of your setup** — no init buttons, no M-code/thread assignments, no custom screen — and its
+`Release64` has no bridge. So after updating KMotion:
+1. **Re-extract the bridge zip** into the new version's `<KMotion>\KMotion\Release64`.
+2. **Copy your KMotionCNC config** from the *old* install's `Data` folder to the *new* one's — with
+   KMotionCNC closed, and after backing up the new copies:
+   `GCodeConfigCNC.txt` (your Tool Setup: M-codes, init buttons, threads, screen reference),
+   `emc.var` (work offsets), `Default.tbl` (tool table), `persistCNC.ini`, and `GFilesCNC.txt`.
+
+Your inits, M-codes, and screen are referenced by absolute path, so they carry over once the config
+points to them. The same bridge build works across KMotion versions — no rebuild needed.
 
 ## 8. Operating reference
 See ./KEYMAP.md and the vendor manual (linked in ./manuals/README.md). All key

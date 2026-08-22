@@ -20,7 +20,12 @@ VistaCNC's LinuxCNC-edition manual. Speed and feel are tuned in a plain-text
 jog if the pendant's input stalls mid-motion.
 
 Built and validated on a Bridgeport-style SuperMax knee-mill conversion (closed-loop
-steppers, switchable knee/quill on Z, open-loop rotary A).
+steppers, switchable knee/quill on Z, open-loop rotary A) driven by a **KFLOP**.
+
+**Kogna?** It *should* also run on Dynomotion's **Kogna** with modest, per-machine changes — the
+bridge talks to KMotion the same way for both boards, and Kogna runs KFLOP C programs — but it's
+**untested** (I don't own one yet). If you have a Kogna and want to help make it work, open an
+issue; I'd be glad to collaborate.
 
 ---
 
@@ -85,7 +90,7 @@ Both `pendant/PendantService.c` and the inits `#include "../shared/..."`, so kee
      page and extract its contents into your `<KMotion>\KMotion\Release64` folder. No .NET SDK,
      no compiling — this is the path for most users. *Windows may flag the download (it's an
      unsigned open-source app): right-click the downloaded zip → **Properties → Unblock** before
-     extracting, or click **More info → Run anyway** on the SmartScreen prompt.*
+     extracting, or on the SmartScreen prompt click **More info** first, then **Run anyway**.*
    - **Build from source** *(tinkerers / contributors)*. Point `<KMotionRoot>` in
      `pendant/iMachKflop.csproj` at your KMotion install, then `dotnet build`. The build deploys
      the exe + `PendantService.c` + `EStopWatch.c` + `pendant.conf` into
