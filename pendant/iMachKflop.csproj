@@ -12,7 +12,7 @@
     <!-- ONE place to point at your KMotion install. Used by the KMotion_dotNet
          reference (HintPath) AND the post-build deploy target below. Change this
          single line for a different KMotion version. -->
-    <KMotionRoot>C:\KMotion5.4.3</KMotionRoot>
+    <KMotionRoot>C:\KMotion5.4.5</KMotionRoot>
   </PropertyGroup>
   <ItemGroup>
     <!-- Lets `dotnet build` compile net48 without full Visual Studio installed -->
