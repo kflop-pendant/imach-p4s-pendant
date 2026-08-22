@@ -1,8 +1,8 @@
 # iMach P4-S → KFLOP / KMotionCNC Pendant Bridge
 
-> ⚠️ **Update KMotion first.** This bridge relies on KFLOP/KMotionCNC fixes that ship in the
-> latest KMotion release — **install/update to the current KMotion before loading the pendant
-> code.** An older KMotion will not work correctly.
+> ⚠️ **Update KMotion first.** This bridge needs KFLOP/KMotionCNC fixes that first shipped in
+> **KMotion 5.4.4** — **install or update to KMotion 5.4.4 (or newer) before loading the pendant
+> code.** Older versions will not work correctly.
 
 Run a **VistaCNC iMach III P4-S USB pendant** with **KMotionCNC** on a **Dynomotion KFLOP**. A
 small Windows app (the "bridge") relays the pendant to your machine — you run it, no coding required.

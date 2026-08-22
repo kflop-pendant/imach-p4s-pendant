@@ -41,8 +41,8 @@ highlights, **attach the zip**, and publish.
 
 ### Note the KMotion version
 
-State in the release notes which KMotion version you built and tested against (currently
-**KMotion 5.4.2+**, plus Tom Kerekes' patched `KMotionCNC.exe` for the trajectory-planner
-SET/GET — see [pendant/docs/INSTALL_GUIDE.md](pendant/docs/INSTALL_GUIDE.md)). A user whose
-KMotion is older, or whose .NET wrapper API differs, can always fall back to building from
-source.
+State the minimum KMotion version in the release notes — **5.4.4**, the first public release with
+the trajectory-planner SET/GET fix the init relies on — and build the release against that same
+version so the shipped exe matches users' `KMotion_dotNet.dll`. Point `<KMotionRoot>` in the csproj
+at your 5.4.4 install before building. A user on an older KMotion can update, or fall back to
+building from source.

@@ -444,10 +444,10 @@ FPGA(STEP_PULSE_LENGTH_ADD)=32 + 0x40 + 0x80;
 	// channel's own values (ch2->Vel etc), so retuning the channel later
 	// automatically flows through to the TP values. TP Vel is in in/sec;
 	// ch->Vel is in counts/sec; divide by counts/inch to convert.
-	// PREREQUISITES: KMotion 5.4.2+ (for the helpers in
-	// KflopToKMotionCNCFunctions.c) AND Tom's patched KMotionCNC.exe
-	// (FixGetSetTPParameters_V5.4.3, 2026-07). Stock 5.4.2/5.4.3 have a
-	// bug where every write lands on X Velocity regardless of Type/Axis.
+	// PREREQUISITES: KMotion 5.4.4+ — it bundles the trajectory-planner
+	// SET/GET fix (Tom Kerekes' FixGetSetTPParameters) and the helpers in
+	// KflopToKMotionCNCFunctions.c. Stock 5.4.2/5.4.3 have a bug where every
+	// SET lands on X Velocity regardless of Type/Axis; 5.4.4 fixes it.
 	// Readback + delayed re-read of counts/inch is the canary for the whole
 	// SET/GET mechanism; per Tom Kerekes 2026-07-22, a genuine comm error
 	// now surfaces as a disconnect message rather than silent corruption.
