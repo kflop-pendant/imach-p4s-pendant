@@ -97,6 +97,10 @@ Both `pendant/PendantService.c` and the inits `#include "../shared/..."`, so kee
    `pendant/autostart/bridge-control.ps1 -Action Console` to watch it start.
 5. **Tune.** Edit `pendant.conf` (next to the exe) and restart — no rebuild.
 
+**Updating KMotion later?** Each KMotion version installs to its own folder, so after an update just
+re-extract the pendant zip into the new version's `Release64`. The same bridge works with KMotion
+5.4.4 and up.
+
 Full step-by-step: [pendant/docs/INSTALL_GUIDE.md](pendant/docs/INSTALL_GUIDE.md).
 
 ---
