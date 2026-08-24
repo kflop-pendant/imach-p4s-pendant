@@ -1,5 +1,11 @@
 # iMach P4-S → KFLOP / KMotionCNC Pendant Bridge
 
+<p align="center">
+  <img src="images/imach-p4s.jpg" alt="VistaCNC iMach III P4-S USB pendant" width="320"><br>
+  <em>The VistaCNC iMach III P4-S — the pendant this bridge drives.<br>
+  Photo courtesy of <a href="https://www.vistacnc.com/b01_pendant_P4_P4S/pendant_P4_P4S.htm">VistaCNC</a>.</em>
+</p>
+
 > ⚠️ **Update KMotion first.** This bridge needs KFLOP/KMotionCNC fixes that first shipped in
 > **KMotion 5.4.4** — **install or update to KMotion 5.4.4 (or newer) before loading the pendant
 > code.** Older versions will not work correctly.
