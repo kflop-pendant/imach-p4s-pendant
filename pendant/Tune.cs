@@ -301,6 +301,17 @@ namespace iMachKflop
         // [pendant.conf: DroDecimals]
         public static int DroDecimals = 4;
 
+        // ROTARY axes read in DEGREES, where the linear decimal count is both
+        // meaningless and too wide. Meaningless: A resolves to 20000/360 =
+        // 0.018 deg per count, so the 3rd and 4th decimals can never move. Too
+        // wide: LCD line 1 is axis letter + value in 8 chars, and at 4 decimals
+        // "A-10.0000" is 9 -- it falls back to "A -OVR" from about -10 deg (and
+        // +100 deg) on, hiding the position exactly when a rotary needs it. Two
+        // decimals is still finer than the hardware resolves and keeps the value
+        // readable through many revolutions either way. Compile-time: it tracks
+        // the axis's physics, not a per-machine taste like DroDecimals.
+        public const int RotaryDroDecimals = 2;
+
         // ===== 8b. SPINDLE OVERRIDE (S%) =======================================
         // Faithful to VistaCNC vc-p4s.hal (halui.spindle-override.scale 0.001):
         // 0.001 fraction added per MPG detent = 0.1%/detent (100 detents/rev ->

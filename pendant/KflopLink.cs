@@ -30,6 +30,7 @@
  */
 
 using System;
+using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Threading;
@@ -124,6 +125,27 @@ namespace iMachKflop
         int  _configId;                            // init config id in effect (1 Standard / 2 Knee-Z); re-read mid-session
         int  _initId;                              // init IDENTITY in effect (1 Std / 2 Knee Z / 3 PCB); for the LCD banner
         bool _primed;                              // StatusUpdateInterval applied once
+
+        // MONOTONIC process clock -- deliberately NOT Environment.TickCount.
+        // TickCount is a SIGNED 32-bit millisecond counter, so it goes NEGATIVE
+        // once the PC has been up 24.9 days, and every "...StartMs" field below
+        // defaults to 0. Past that uptime the elapsed-time tests below compared
+        // a hugely negative "now" against 0 and inverted:
+        //
+        //   ZeroBusy: (-1,882,738,515 - 0) < 300  ->  TRUE, permanently.
+        //
+        // That latched ZeroBusy ON at service start and gated EVERY pendant zero
+        // on EVERY axis; because _zeroStartMs is only written on the far side of
+        // that gate, it could never recover. Diagnosed 2026-09-21 at 27.9 days
+        // uptime -- zeroing had worked until the service happened to restart
+        // after the wrap. The same inversion made "ours" always true in
+        // Service(), so MachineIdle read stuck-IDLE until the first jog.
+        //
+        // Stopwatch is 64-bit and starts at 0 per process, so it never wraps and
+        // the 0 defaults are merely "a moment ago" instead of "1.9e9 ms ahead".
+        // Mirrors Bridge._clock / Bridge.NowMs, which already did this correctly.
+        readonly Stopwatch _clock = Stopwatch.StartNew();
+        long NowMs => _clock.ElapsedMilliseconds;
 
         readonly double[] _lastDest = new double[NumChan];
         int  _idleSamples;
@@ -361,8 +383,8 @@ namespace iMachKflop
                 throw new InvalidOperationException("PendantService load failed: " + err);
 
             double h0 = _km.GetUserDataDouble(UD_HEARTBEAT);
-            long t0 = Environment.TickCount;
-            while (Environment.TickCount - t0 < ServiceStartMs)
+            long t0 = NowMs;
+            while (NowMs - t0 < ServiceStartMs)
             {
                 Thread.Sleep(50);
                 double hb = _km.GetUserDataDouble(UD_HEARTBEAT);
@@ -387,8 +409,8 @@ namespace iMachKflop
             if (!string.IsNullOrEmpty(err))
                 throw new InvalidOperationException("EStopWatch load failed: " + err);
 
-            long t0 = Environment.TickCount;
-            while (Environment.TickCount - t0 < WatchStartMs)
+            long t0 = NowMs;
+            while (NowMs - t0 < WatchStartMs)
             {
                 Thread.Sleep(50);
                 if (_km.GetUserDataDouble(UD_WATCH_HB) != h0) return;   // heartbeat moved -> running
@@ -446,7 +468,7 @@ namespace iMachKflop
         // next velocity change -- INCLUDING a direction reversal. Root-caused from a
         // [JOGDBG] trace 2026-07-25 (wr flipped negative correctly but cmdIpm stayed
         // pinned at +max because CanJogCh was false once MachineIdle went to 0).
-        public void MarkJogActive() { _lastBridgeMotionMs = Environment.TickCount; }
+        public void MarkJogActive() { _lastBridgeMotionMs = NowMs; }
 
         // Raw console jog: velocity + accel travel WITH the command (JogAtAccelN=V A).
         // V and A are in COUNTS (the console operates on raw channel units), so IPM ->
@@ -458,7 +480,7 @@ namespace iMachKflop
             if (!CanJogCh(s.JogCh)) return false;
             double ipm       = Math.Max(-s.MaxIpm, Math.Min(s.MaxIpm, desiredIpm));
             double velCounts = ipm / 60.0 * s.Cpi;          // user units/min -> counts/sec
-            _lastBridgeMotionMs = Environment.TickCount;
+            _lastBridgeMotionMs = NowMs;
             _km.WriteLine("JogAtAccel" + s.JogCh + "=" + N(velCounts) + " " + N(s.JogAccelCounts));
             return true;
         }
@@ -474,7 +496,7 @@ namespace iMachKflop
             if (!CanJogCh(s.JogCh)) return false;
             double distCounts = stepInches * s.Cpi;
             double velCounts  = Tune.StepJogFeedIpm / 60.0 * s.Cpi;
-            _lastBridgeMotionMs = Environment.TickCount;
+            _lastBridgeMotionMs = NowMs;
             _km.WriteLine("MoveRelAtVelAccel" + s.JogCh + "=" + N(distCounts) + " "
                           + N(velCounts) + " " + N(s.StepAccelCounts));
             return true;
@@ -486,7 +508,7 @@ namespace iMachKflop
         public void StopJogSel(int sel)
         {
             var s = _sel[sel];
-            _lastBridgeMotionMs = Environment.TickCount;
+            _lastBridgeMotionMs = NowMs;
             _km.WriteLine("JogAtAccel" + s.JogCh + "=0 " + N(s.JogAccelCounts));
         }
 
@@ -499,7 +521,7 @@ namespace iMachKflop
         // abort the loop — every remaining channel still gets its stop.
         public void StopAllChannels()
         {
-            _lastBridgeMotionMs = Environment.TickCount;
+            _lastBridgeMotionMs = NowMs;
             for (int ch = 0; ch < NumChan; ch++)
             {
                 // JogAtAccelN=0 A -- decel-stop at the deliberately-large E-stop accel
@@ -530,12 +552,12 @@ namespace iMachKflop
             _lastSentAxis = coordAxis;
             PostCmd(CMD_ZERO, coordAxis);          // reliable CMD channel (like spindle/S%)
             _zeroState   = ZeroState.Pending;      // -> Ok in PollZero so the LCD 'ZEROED' fires each time
-            _zeroStartMs = Environment.TickCount;
+            _zeroStartMs = NowMs;
         }
 
         // Short guard after a zero so rapid taps can't flood KMotionCNC. The zero
         // is fire-and-forget over the reliable CMD channel; there's nothing to poll.
-        public bool ZeroBusy => (Environment.TickCount - _zeroStartMs) < ZeroGuardMs;
+        public bool ZeroBusy => (NowMs - _zeroStartMs) < ZeroGuardMs;
 
         public ZeroState PollZero()
         {
@@ -543,7 +565,7 @@ namespace iMachKflop
             // moment after dispatch we call it done (drives the LCD 'ZEROED'). If a
             // Set ever visibly misses, the DRO shows it and you re-zero.
             if (_zeroState == ZeroState.Pending &&
-                Environment.TickCount - _zeroStartMs >= ZeroConfirmMs)
+                NowMs - _zeroStartMs >= ZeroConfirmMs)
                 _zeroState = ZeroState.Ok;
             return _zeroState;
         }
@@ -559,7 +581,7 @@ namespace iMachKflop
             PostCmd(CMD_GOTOZ, 0.0);              // phase 0: retract Z
             _gotozPhase   = 1;
             _gotozState   = ZeroState.Pending;
-            _gotozStartMs = Environment.TickCount;
+            _gotozStartMs = NowMs;
         }
 
         public bool GotozBusy => _gotozPhase != 0;
@@ -568,7 +590,7 @@ namespace iMachKflop
         {
             if (_gotozPhase == 0) return _gotozState;
 
-            if (Environment.TickCount - _gotozStartMs > GotozMaxMs)
+            if (NowMs - _gotozStartMs > GotozMaxMs)
             {
                 _gotozPhase = 0;                 // stalled (e.g. E-stop) -> abort; X/Y never fired
                 _gotozState = ZeroState.Timeout;
@@ -585,7 +607,7 @@ namespace iMachKflop
                 {
                     PostCmd(CMD_GOTOZ, 1.0);     // phase 1: X & Y -> work zero
                     _gotozPhase   = 2;
-                    _gotozStartMs = Environment.TickCount;
+                    _gotozStartMs = NowMs;
                 }
             }
             else if (_gotozPhase == 2)
@@ -653,7 +675,7 @@ namespace iMachKflop
                 if (Math.Abs(d - _lastDest[ch]) > DestEpsilonCounts) moving = true;
                 _lastDest[ch] = d;
             }
-            bool ours = (Environment.TickCount - _lastBridgeMotionMs) < MotionTailMs;
+            bool ours = (NowMs - _lastBridgeMotionMs) < MotionTailMs;
             if (moving && !ours) _idleSamples = 0;
             else if (_idleSamples < IdleSamplesRequired) _idleSamples++;
 

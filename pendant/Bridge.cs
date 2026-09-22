@@ -815,9 +815,12 @@ namespace iMachKflop
             return "OR " + (int)Math.Round(_ssoFrac * 100.0) + "%";
         }
 
-        static string DroFormat()
+        // Rotary axes get their own (coarser) decimal count -- see Tune.RotaryDroDecimals
+        // for why degrees can't use the linear setting. Linear axes are unchanged.
+        static string DroFormat(bool rotary)
         {
-            int dec = Math.Max(2, Math.Min(4, Tune.DroDecimals));
+            int dec = rotary ? Tune.RotaryDroDecimals
+                             : Math.Max(2, Math.Min(4, Tune.DroDecimals));
             return "0." + new string('0', dec);
         }
 
@@ -857,7 +860,7 @@ namespace iMachKflop
 
             char label = _kflop.SelLabel(_sel);
             double val = _dro[_kflop.DroSlot(_sel)];
-            string s  = val.ToString(DroFormat());
+            string s  = val.ToString(DroFormat(_kflop.SelRotary(_sel)));
             string l1 = label + s;
             if (l1.Length > 8)
                 l1 = label + (val >= 0 ? " +OVR" : " -OVR");
