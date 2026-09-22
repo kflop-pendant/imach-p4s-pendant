@@ -110,7 +110,19 @@ Both `pendant/PendantService.c` and the inits `#include "../shared/..."`, so kee
 
 **Updating KMotion later?** Each KMotion version installs to its own folder, so after an update just
 re-extract the pendant zip into the new version's `Release64`. The same bridge works with KMotion
-5.4.4 and up.
+5.4.4 and up. Note the autostart task picks the **newest-dated** `iMachKflop.exe` across *all*
+`C:\KMotion*` installs — so re-extract into the new folder (that makes it newest), and don't leave a
+newer build sitting in an old install, or the task will launch that one and it will fail to load its
+KFLOP programs against the running server.
+
+**Already installed? Pull the repo for the supervisor fix.** The autostart scripts in
+`pendant/autostart/` live in this repo, **not** in the release zip — so updating the zip does not
+update them. If you set up before 2026-09-22, `git pull` (or re-download the repo) to pick up a fix
+to `run-pendant.ps1`: the supervisor could end up alive as a process but no longer relaunching the
+bridge, leaving the pendant dead with nothing obviously wrong and no log to explain it. It now also
+writes `%LOCALAPPDATA%\PendantBridge\run-pendant.log`, one line per start/exit — the first place to
+look if the pendant ever goes quiet. Nothing else needs reinstalling; the bridge binary is
+unaffected.
 
 Full step-by-step: [pendant/docs/INSTALL_GUIDE.md](pendant/docs/INSTALL_GUIDE.md).
 
