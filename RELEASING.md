@@ -42,7 +42,14 @@ highlights, **attach the zip**, and publish.
 ### Note the KMotion version
 
 State the minimum KMotion version in the release notes — **5.4.4**, the first public release with
-the trajectory-planner SET/GET fix the init relies on — and build the release against that same
-version so the shipped exe matches users' `KMotion_dotNet.dll`. Point `<KMotionRoot>` in the csproj
-at your 5.4.4 install before building. A user on an older KMotion can update, or fall back to
-building from source.
+the trajectory-planner SET/GET fix the init relies on. A user on an older KMotion can update, or
+fall back to building from source.
+
+**You do NOT have to build against that minimum version.** Build with whatever KMotion you have
+installed (point `<KMotionRoot>` at it). `KMotion_dotNet.dll` carries the same assembly identity
+across releases — 1.0.1.0 in 5.4.0, 5.4.3 and 5.4.5 alike — and the zip deliberately excludes it,
+so the shipped exe binds to whichever copy already sits in the user's own `Release64`. The 5.4.4
+floor comes from the KFLOP-side trajectory-planner fix, not from anything the build links against.
+
+(v1.0.1 was built against 5.4.5 on this basis. The earlier "build against the minimum" rule was
+precautionary and turned out to block releases on keeping an old KMotion installed.)
