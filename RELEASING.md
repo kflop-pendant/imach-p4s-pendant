@@ -23,6 +23,7 @@ From `pendant/bin/Release/net48/`:
 Plus, from the repo:
 - `pendant/PendantService.c`
 - `pendant/EStopWatch.c`
+- `pendant/InitPrompt.c`
 - `pendant/pendant.conf`
 - `shared/KflopToKMotionCNCFunctions.c`
 

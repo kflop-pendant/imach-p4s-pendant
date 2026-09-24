@@ -47,6 +47,11 @@
          copy is needed; refreshed with every build like the service. -->
     <Copy SourceFiles="$(MSBuildProjectDirectory)\EStopWatch.c"
           DestinationFolder="$(KMotionRoot)\KMotion\Release64" />
+    <!-- InitPrompt.c: blinks the screen's "CHOOSE init ->" readout until an init is
+         loaded; the bridge launches it on Thread 3 before any init exists. Self-
+         contained (KMotionDef.h only), refreshed with every build. -->
+    <Copy SourceFiles="$(MSBuildProjectDirectory)\InitPrompt.c"
+          DestinationFolder="$(KMotionRoot)\KMotion\Release64" />
     <!-- PendantService.c #includes KflopToKMotionCNCFunctions.c by basename, resolved
          against its own folder, so the KFLOP-side helper must sit next to it here. -->
     <Copy SourceFiles="$(MSBuildProjectDirectory)\..\shared\KflopToKMotionCNCFunctions.c"

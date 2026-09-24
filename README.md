@@ -99,7 +99,7 @@ Both `pendant/PendantService.c` and the inits `#include "../shared/..."`, so kee
      extracting, or on the SmartScreen prompt click **More info** first, then **Run anyway**.*
    - **Build from source** *(tinkerers / contributors)*. Point `<KMotionRoot>` in
      `pendant/iMachKflop.csproj` at your KMotion install, then `dotnet build`. The build deploys
-     the exe + `PendantService.c` + `EStopWatch.c` + `pendant.conf` into
+     the exe + `PendantService.c` + `EStopWatch.c` + `InitPrompt.c` + `pendant.conf` into
      `<KMotion>\KMotion\Release64`; the bridge loads them from that folder. See
      [RELEASING.md](RELEASING.md) if you're packaging a release.
 3. **Init contract.** Have your KFLOP init publish `UserData 54` (config id) and, optionally,

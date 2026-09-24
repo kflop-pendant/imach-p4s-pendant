@@ -376,6 +376,7 @@ namespace iMachKflop
         // Line 1 = the init name (by identity var 56: 1 Standard / 2 Knee Z / 3 PCB),
         // line 2 = InitLoadedL2. Each fits the 8-char LCD line.
         public const string InitLoadedL2   = "Loaded";
+        public const string InitLoadingL2  = "Loading"; // + blinking "." while the init loads (7 + 1 = 8 chars)
         public const string InitNameStd    = "Standard";  // identity 1
         public const string InitNameKnee   = "Knee Z";    // identity 2
         public const string InitNamePcb    = "PCB";       // identity 3

@@ -53,6 +53,8 @@ namespace iMachKflop
         const double VelFractionEps   = 0.02;
         const int    ContIdleStopMs   = 120;
         const int    InitBannerMs     = 2000;   // how long the init-load banner (name/"Loaded") holds the LCD
+        const int    InitLoadingMaxMs = 20000;  // "Loading" banner gives the LCD back after this if the init never finishes
+        const int    InitLoadingBlinkMs = 400;  // blink period of the trailing "." on the "Loading" line
         const double IpmSendEps       = 0.10;
         const double FroStepFactor    = 1.03;
         const int    UpkeepIntervalMs = 50;
@@ -129,6 +131,8 @@ namespace iMachKflop
         long      _machineOnMsgUntilMs;          // briefly show "Machine / ON" on re-enable
         long      _cfgMsgUntilMs;                // init-load banner window (name + "Loaded")
         int       _cfgInitId;                    // which init identity that banner names (1 Std / 2 Knee Z / 3 PCB)
+        int       _loadingInitId;                // init currently LOADING (var 58 negative), 0 = none
+        long      _loadingSinceMs;               // when that load was first seen (for InitLoadingMaxMs)
 
         long NowMs => _clock.ElapsedMilliseconds;
         double StepInches => Tune.StepSizes[_stepIdx];
@@ -721,14 +725,32 @@ namespace iMachKflop
             // var 54) and raise the LCD banner -- no bridge restart. The inits republish
             // 56 in a forever loop, so a change noticed while busy simply applies on the
             // first safe upkeep -- deferred until safe, never dropped, never under a jog.
-            if (_kflop.MachineIdle && !_jogging)
+            //
+            // Loading phase: each init writes -identity to var 58 first thing in main(),
+            // so a NEGATIVE value means that init is loading. That only drives the LCD
+            // ("<name> / Loading" -- display-only, so not gated on idle). Seeing it also
+            // makes the final "Loaded" banner fire when the SAME init is reloaded, which
+            // the identity-change test alone can't detect (1 -> -1 -> 1).
+            int initState = _kflop.ReadInitState();
+            if (initState < 0)
             {
-                int liveInit = _kflop.ReadInitId();
-                if (liveInit != _kflop.InitId && _kflop.ApplyInit(liveInit, _kflop.ReadConfigId()))
+                if (_loadingInitId != -initState)
                 {
-                    _cfgInitId     = liveInit;
+                    _loadingInitId  = -initState;
+                    _loadingSinceMs = now;
+                    _cfgMsgUntilMs  = 0;           // a new load supersedes any "Loaded" banner
+                    Console.WriteLine("Init loading: " + InitBannerName(_loadingInitId) + ".");
+                }
+            }
+            else if (initState > 0 && _kflop.MachineIdle && !_jogging)
+            {
+                bool changed = initState != _kflop.InitId && _kflop.ApplyInit(initState, _kflop.ReadConfigId());
+                if (changed || _loadingInitId != 0)
+                {
+                    _loadingInitId = 0;
+                    _cfgInitId     = initState;
                     _cfgMsgUntilMs = now + InitBannerMs;
-                    Console.WriteLine("Init loaded: " + InitBannerName(liveInit)
+                    Console.WriteLine("Init loaded: " + InitBannerName(initState)
                         + " (config id " + _kflop.ConfigId + ").");
                 }
             }
@@ -852,6 +874,16 @@ namespace iMachKflop
         {
             // Init-load banner takes over the WHOLE screen briefly: name on line 1,
             // "Loaded" on line 2 (clears the DRO), then normal drawing resumes.
+            // While an init is loading: name on line 1, "Loading" + a blinking "." on
+            // line 2, held until that init publishes its identity (then the "Loaded"
+            // banner below) or InitLoadingMaxMs passes (init interrupted / never done).
+            if (_loadingInitId != 0 && NowMs - _loadingSinceMs < InitLoadingMaxMs)
+            {
+                bool dot = (NowMs / InitLoadingBlinkMs) % 2 == 0;
+                _pendant.WriteLcd(Center(InitBannerName(_loadingInitId)),
+                                  Tune.InitLoadingL2 + (dot ? "." : " "), BuildIndicator());
+                return;
+            }
             if (NowMs < _cfgMsgUntilMs)
             {
                 _pendant.WriteLcd(Center(InitBannerName(_cfgInitId)), Center(Tune.InitLoadedL2), BuildIndicator());

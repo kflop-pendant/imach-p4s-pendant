@@ -79,6 +79,17 @@ int main()
 	// pulse anyway, since not all axes are enabled yet. If the shuttering
 	// returns, restore SetBit(154) here and ClearBit(154) below.)
 
+	// Screen init readout (Var 170): show "PCB LOADING..." the moment this
+	// init starts, so the ~6s of drive reset/settle below and the TP block don't
+	// look like a missed click. Replaced by "init LOADED" / "TP FAIL!!" after the
+	// TP block. DROLabel is a plain gather/persist write (no PC_COMM), so it can't
+	// race PendantService. Every Var 170 write in this file uses gather offset
+	// 1100, clear of the Var 172 Control-lock label (1000, PendantService) and
+	// MDI_KeepAlive (1024), so the two readouts can never swap text.
+	DROLabel(1100, 170, "PCB LOADING...");
+	SetUserDataDouble(58, -3.0);	// pendant LCD "<name> / Loading" -- NEGATIVE identity =
+									// loading; +3 is published after the TP block (var 58)
+
 	Delay_sec(1);
 	
 	SetBit(158); 	// Activates RESET switch on KFLOP to trigger reset for all Stepper Drivers
@@ -456,6 +467,7 @@ FPGA(STEP_PULSE_LENGTH_ADD)=32 + 0x40 + 0x80;
 	// now surfaces as a disconnect message rather than silent corruption.
 	{
 		int    rcZcpi, rcCcpi, rcZv, rcZa, rcCv, rcCa, rcZj, rcCj;
+		int    ax, rc, rcSet0;
 		double vZ,  vC, vZ2, vC2;
 		double _hold_wait_start;
 
@@ -503,6 +515,24 @@ FPGA(STEP_PULSE_LENGTH_ADD)=32 + 0x40 + 0x80;
 		printf("SET Z JogVel rc=%d (0.08 in/s)  C JogVel rc=%d (0.3 in/s)\n",
 		       rcZj, rcCj);
 
+		// Zero all five DROs (X/Y/Z/A/C) on every init load. Zero() above resets
+		// the channels, but each DRO subtracts KMotionCNC's saved offset for that
+		// axis (G92, or the active fixture if Zero Using Fixture Offsets is on),
+		// which persists in emc.var across sessions and survives an init reload --
+		// so any axis zeroed with a button came up non-zero (A showed a stale
+		// 439.05). PC_COMM_SET_X+axis is KMotionCNC's native Set (same as the
+		// screen Set buttons and the pendant zero), so it targets whichever offset
+		// the zero buttons use. Coord axes 0..5 = X Y Z A B C; B (4) is unused.
+		// It goes through PC_COMM, hence inside this TP_HOLD block.
+		rcSet0 = 0;
+		for (ax = 0; ax <= 5; ax++)
+		{
+			if (ax == 4) continue;	// no B axis
+			rc = DoPCFloat(PC_COMM_SET_X + ax, 0.0F);
+			if (rc) rcSet0 = rc;
+		}
+		printf("SET X/Y/Z/A/C DROs=0 rc=%d\n", rcSet0);
+
 		Delay_sec(0.5);
 		GetTPParameter(PT_COUNTS_PER_INCH, AXIS_Z, &vZ2);
 		GetTPParameter(PT_COUNTS_PER_INCH, AXIS_C, &vC2);
@@ -531,7 +561,7 @@ FPGA(STEP_PULSE_LENGTH_ADD)=32 + 0x40 + 0x80;
 				sprintf(_s, "PCB TP FAIL!!");
 				TP_verified = 0;
 			}
-			DROLabel(1000, 170, _s);
+			DROLabel(1100, 170, _s);
 		}
 
 		// Release the PC_COMM hold — PendantService can resume polling.
@@ -666,7 +696,7 @@ void WatchdogOK(void)			// Trips when KMotionCNC is open
 			sprintf(_s, "PCB init LOADED");
 		else
 			sprintf(_s, "PCB TP FAIL!!");
-		DROLabel(1000, 170, _s);
+		DROLabel(1100, 170, _s);
 	}
 
 	// Kick off non-blocking LED blink pattern (Tom 2026-07-24 review — the

@@ -65,6 +65,7 @@ namespace iMachKflop
         const int NumChan = 6;
         const int ServiceThread = 7;
         const int WatchThread   = 5;   // EStopWatch.c -- dedicated E-stop watchdog, nothing else ever here
+        const int PromptThread  = 3;   // InitPrompt.c -- "CHOOSE init ->" blinker; exits once an init starts
 
         const int    StatusIntervalMs    = 50;
         const double DestEpsilonCounts   = 3.0;
@@ -214,11 +215,21 @@ namespace iMachKflop
         // mid-load -- reading identity there mis-fired a spurious "Standard" banner.)
         public int ReadInitId()
         {
+            int s = ReadInitState();
+            return s > 0 ? s : 0;
+        }
+
+        // Raw init state at var 58, including the LOADING phase: each init writes the
+        // NEGATIVE of its identity (-1 Std / -2 Knee Z / -3 PCB) as the first thing in
+        // main(), then the positive identity after its TP block. So -3..-1 = that init
+        // is loading, 1..3 = loaded, 0 = not set / unreadable / out of range.
+        public int ReadInitState()
+        {
             try
             {
                 EnsureController();
                 int id = (int)Math.Round(_km.GetUserDataDouble(UD_INIT_ID));
-                return (id == 1 || id == 2 || id == 3) ? id : 0;
+                return (id >= -3 && id <= 3) ? id : 0;
             }
             catch { return 0; }
         }
@@ -398,6 +409,24 @@ namespace iMachKflop
         // never evict it. Twin of LaunchService(): compile+load, then confirm it is
         // actually executing via its heartbeat before proceeding. Safety-critical, so
         // a failure to start throws (the bridge will not connect without the watchdog).
+        // Start InitPrompt.c (the screen's blinking "CHOOSE init ->") on PromptThread.
+        // Called by Program's pre-connect wait loop, before any init exists, so no
+        // PendantService / TP_HOLD is involved; the program only does DROLabel
+        // writes and exits by itself when an init starts. Safe before Connect()
+        // (uses only the lazily built controller). Returns null on success, else
+        // the reason -- the caller just logs it: the blink is a convenience.
+        public string LaunchPrompt(string promptCFile)
+        {
+            try
+            {
+                if (!File.Exists(promptCFile)) return "InitPrompt.c not found: " + promptCFile;
+                EnsureController();
+                string err = _km.ExecuteProgram(PromptThread, promptCFile, false);
+                return string.IsNullOrEmpty(err) ? null : err;
+            }
+            catch (Exception ex) { return ex.Message; }
+        }
+
         void LaunchWatch()
         {
             if (!File.Exists(_watchCFile))

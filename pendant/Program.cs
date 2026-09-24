@@ -46,6 +46,7 @@ namespace iMachKflop
         static readonly string AppDir      = AppDomain.CurrentDomain.BaseDirectory;
         static readonly string ServiceCFile = Path.Combine(AppDir, "PendantService.c");
         static readonly string WatchCFile   = Path.Combine(AppDir, "EStopWatch.c");
+        static readonly string PromptCFile  = Path.Combine(AppDir, "InitPrompt.c");
         static readonly string ConfigFile   = Path.Combine(AppDir, "pendant.conf");
 
         static volatile int    _ledByte = 0;
@@ -174,6 +175,7 @@ namespace iMachKflop
         {
             bool sawBoard = false;
             bool announcedKflop = false, announcedCnc = false, announcedInit = false;
+            bool promptLaunched = false;   // InitPrompt.c started for this KFLOP power-up
 
             while (!_stop)
             {
@@ -198,6 +200,7 @@ namespace iMachKflop
                     announcedKflop = false;
                     announcedCnc = false;
                     announcedInit = false;
+                    promptLaunched = false;   // a (re)appearing board may have been power-cycled
                 }
 
                 bool cnc = CncRunning();
@@ -222,6 +225,18 @@ namespace iMachKflop
                         Console.WriteLine("KMotionCNC up. Waiting for an init (press your init button)...");
                         announcedInit = true;
                         announcedCnc = false;
+                    }
+                    // Blink "CHOOSE init ->" on the screen while nothing is loaded. Only
+                    // when no init has even STARTED since power-up (var 58 == 0) -- a
+                    // negative value means one is loading, and the init owns the label.
+                    // Once per power-up: InitPrompt.c runs until an init starts, and
+                    // relaunching it would needlessly recompile. Failure is logged only.
+                    if (!promptLaunched && kflop.ReadInitState() == 0)
+                    {
+                        promptLaunched = true;
+                        string err = kflop.LaunchPrompt(PromptCFile);
+                        Console.WriteLine(err == null ? "No init loaded -- screen prompt \"CHOOSE init ->\" blinking."
+                                                      : "Screen init prompt not started: " + err);
                     }
                     SafeLcd(pendant, Tune.WaitInitL1, Tune.WaitInitL2);
                 }

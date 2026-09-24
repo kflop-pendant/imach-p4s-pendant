@@ -53,6 +53,7 @@ hardwired button is the guarantee.
         v
   KFLOP  ............... PendantService.c on thread 7
                         EStopWatch.c on thread 5 (dedicated E-stop watchdog)
+                        InitPrompt.c on thread 3 (screen "CHOOSE init ->" blink, until an init loads)
         |  UserData cells (shared memory)
         v
   KMotionCNC  ......... G-code interpreter, DROs, custom screen
@@ -82,7 +83,8 @@ It is *not* usable as a plain HID device by this bridge.
 | `TuneConfig.cs` | Loads and strictly validates `pendant.conf` into `Tune` at startup — fail-loud, no silent fallback to defaults, every applied value echoed to the console. |
 | `PendantService.c` | The KFLOP-side half. Runs as a C program on thread 7: publishes the DROs and the axis-enable state into UserData every loop, executes commands the bridge posts (zero, go-to-zero, spindle, overrides, control lock), keeps a heartbeat so the link watchdog doesn't false-trip, and writes the custom-screen status labels. Deployed next to the exe by the build. |
 | `EStopWatch.c` | The dedicated hardware-E-stop watchdog. Runs alone on thread 5 (nothing else is ever launched there) so a running job can never evict it. It does one thing: watch the E-stop input and, while it is asserted, stop coordinated motion immediately, drop the drives, and raise the flag `PendantService.c` relays to a KMotionCNC Halt. Self-contained (`KMotionDef.h` only); deployed next to the exe by the build and loaded by the bridge. |
-| `iMachKflop.csproj` | .NET Framework 4.8, x64. Builds to the KMotion `Release64` folder and deploys `PendantService.c` + `EStopWatch.c` + `pendant.conf` alongside the exe. |
+| `InitPrompt.c` | Blinks the custom screen's init readout (`DROLabel` Var 170) with "CHOOSE init ->" while no init has been loaded since KFLOP power-up, and exits the moment one starts. The bridge launches it on thread 3 from its pre-connect wait loop — once per power-up, when the KFLOP answers, KMotionCNC is running and UserData 58 is 0 — so it works in any startup order with no KMotionCNC compile popup. Self-contained; deployed next to the exe by the build. Harmless if your screen has no Var 170 readout. |
+| `iMachKflop.csproj` | .NET Framework 4.8, x64. Builds to the KMotion `Release64` folder and deploys `PendantService.c` + `EStopWatch.c` + `InitPrompt.c` + `pendant.conf` alongside the exe. |
 
 ### Auto-start — `pendant/autostart/`
 
@@ -131,7 +133,9 @@ carry two small additions the pendant relies on:
   physical axis is on which channel (this mill can put either the knee or the quill on Z);
 - an **init identity** (UserData 58: 1 = Standard, 2 = Knee Z, 3 = PCB) so the pendant can
   name the loaded init on its LCD banner — a separate value from the config id because
-  Knee Z and PCB share config id 2 and would otherwise be indistinguishable;
+  Knee Z and PCB share config id 2 and would otherwise be indistinguishable. Each init also
+  writes the **negative** identity (-1 / -2 / -3) as the first thing it does, so the pendant
+  shows "<name> / Loading" during the ~7 s load (and on a same-init reload), then "Loaded";
 - a **`DROLabel` call** that names the loaded init on the custom screen.
 
 | File | What it does |
