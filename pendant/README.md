@@ -131,9 +131,9 @@ carry two small additions the pendant relies on:
 
 - a **config id** (UserData 54: 1 = quill on Z, 2 = knee on Z) telling the bridge which
   physical axis is on which channel (this mill can put either the knee or the quill on Z);
-- an **init identity** (UserData 58: 1 = Standard, 2 = Knee Z, 3 = PCB) so the pendant can
+- an **init identity** (UserData 58: 1 = Standard, 2 = Knee Z, 3 = HSS) so the pendant can
   name the loaded init on its LCD banner — a separate value from the config id because
-  Knee Z and PCB share config id 2 and would otherwise be indistinguishable. Each init also
+  Knee Z and HSS share config id 2 and would otherwise be indistinguishable. Each init also
   writes the **negative** identity (-1 / -2 / -3) as the first thing it does, so the pendant
   shows "<name> / Loading" during the ~7 s load (and on a same-init reload), then "Loaded";
 - a **`DROLabel` call** that names the loaded init on the custom screen.
@@ -142,7 +142,7 @@ carry two small additions the pendant relies on:
 |---|---|
 | `JPB - Standard.c` | Quill on Z. The everyday configuration. |
 | `JPB - Knee Z.c` | Knee on Z, so unedited G-code can use the full knee travel. |
-| `JPB - PCB.c` | Knee on Z, tuned for PCB isolation milling. |
+| `JPB - HSS.c` | Knee on Z, high-speed spindle on the side of the head (formerly `JPB - PCB.c`). |
 
 ---
 
@@ -167,7 +167,7 @@ carry two small additions the pendant relies on:
 - **F3 = control lock** — enables/disables all axes, mirrored on the screen.
 - Function buttons use a **hold-then-tap-EN** grammar: hold the button, the LCD shows
   what it will do, tap EN to commit. Nothing fires on a single press.
-- **Live init tracking** — load a different machine init (Standard / Knee Z / PCB) and the
+- **Live init tracking** — load a different machine init (Standard / Knee Z / HSS) and the
   bridge re-resolves knee-vs-quill on the fly and flashes the init name on the LCD for
   ~2 s. No bridge restart, and the swap is deferred until the machine is idle so it never
   changes a jogging axis's parameters underneath it.

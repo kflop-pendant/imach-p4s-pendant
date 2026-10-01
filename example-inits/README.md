@@ -17,7 +17,7 @@ after the trajectory-planner (`SetTPParameter`) block:
 | UserData (double index) | Meaning |
 |---|---|
 | **`54` — config id** | Which physical axis is on Z. `1` = quill on ch2, `2` = knee on ch2. The bridge resolves the Z/C pair's counts-per-inch, speed cap, and accel from this. If your machine has a single fixed Z, just publish `1`. This value is also the bridge's **"an init has run"** signal — until it appears, the bridge waits. |
-| **`58` — init identity** | A distinct number per init so the pendant can name the loaded config on its LCD banner: here `1` = Standard, `2` = Knee Z, `3` = PCB. Assign your own. It is a *separate* value from `54` because two configs can share a config id (Knee Z and PCB are both `54 = 2`) yet want different names. Optional — without it the pendant simply won't name the init. **Also write the negative (`-id`) as the very first thing in `main()`**: the pendant then shows "<name> / Loading" during the load (including a reload of the same init), and `InitPrompt.c` / `InitGate.c` use `58` to tell "no init since power-up" (`0`) from "loading" (`< 0`) and "loaded" (`> 0`). |
+| **`58` — init identity** | A distinct number per init so the pendant can name the loaded config on its LCD banner: here `1` = Standard, `2` = Knee Z, `3` = HSS. Assign your own. It is a *separate* value from `54` because two configs can share a config id (Knee Z and PCB are both `54 = 2`) yet want different names. Optional — without it the pendant simply won't name the init. **Also write the negative (`-id`) as the very first thing in `main()`**: the pendant then shows "<name> / Loading" during the load (including a reload of the same init), and `InitPrompt.c` / `InitGate.c` use `58` to tell "no init since power-up" (`0`) from "loading" (`< 0`) and "loaded" (`> 0`). |
 
 Minimal example:
 
@@ -43,7 +43,7 @@ int main()
 |---|---|
 | `JPB - Standard.c` | Quill on Z. Config id `1`, identity `1`. The everyday setup. |
 | `JPB - Knee Z.c` | Knee on Z (so unedited G-code can use full knee travel). Config id `2`, identity `2`. |
-| `JPB - PCB.c` | Knee on Z, high-speed spindle, tuned for PCB isolation milling. Config id `2`, identity `3`. |
+| `JPB - HSS.c` | Knee on Z, high-speed spindle on the side of the head (formerly `JPB - PCB.c`). Config id `2`, identity `3`. |
 | `DriveResetAtStartup.c` | Power-on program (thread 1) that holds the stepper drives disabled until an init loads. |
 | `InitGate.c` | Optional confirmation gate for the screen's init buttons — see below. |
 

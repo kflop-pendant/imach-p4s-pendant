@@ -37,7 +37,7 @@ namespace iMachKflop
 
         // Knee-vs-quill on ch2 is chosen at RUNTIME from the config id your init
         // publishes (UserData double-index 54: 1 = Standard / quill on ch2,
-        // 2 = PCB or Knee-Z / knee on ch2). So ONE build is correct for whichever
+        // 2 = HSS or Knee-Z / knee on ch2). So ONE build is correct for whichever
         // init you load. This constant is only a FALLBACK, used if that id can't
         // be read (it normally never is).
         public const bool KneeOnCh2 = true;
@@ -180,10 +180,12 @@ namespace iMachKflop
             new ButtonCfg { Enabled=true,  Label="STOP"     },   // 5
         };
 
-        // Process name of KMotionCNC (no ".exe"). The bridge waits for this to be
-        // running before it connects -- so it sits quietly at WAIT/CNC instead of
-        // flapping when you use the PC without a milling session.
-        public const string CncProcessName = "KMotionCNC";
+        // Process names of KMotionCNC (no ".exe"). The bridge waits for one of these
+        // to be running before it connects -- so it sits quietly at WAIT/CNC instead
+        // of flapping when you use the PC without a milling session.
+        // KMotionCNC_dev = a locally built KMotionCNC (from the source KMotion ships
+        // in PC VC Examples), installed beside the official exe under that name.
+        public static readonly string[] CncProcessNames = { "KMotionCNC", "KMotionCNC_dev" };
 
         // ===== AUTO-START ====================================================
         // Read by pendant\autostart\run-pendant.ps1 BEFORE the bridge launches --
@@ -373,13 +375,17 @@ namespace iMachKflop
         public const string StatusGotoz   = "GOTOZ";     // go-to-zero move issued (post-move flash)
 
         // Init-load banner (full screen for ~2s when a new init is loaded mid-session).
-        // Line 1 = the init name (by identity var 56: 1 Standard / 2 Knee Z / 3 PCB),
+        // Line 1 = the init name (by identity var 56: 1 Standard / 2 Knee Z / 3 HSS),
         // line 2 = InitLoadedL2. Each fits the 8-char LCD line.
         public const string InitLoadedL2   = "Loaded";
         public const string InitLoadingL2  = "Loading"; // + blinking "." while the init loads (7 + 1 = 8 chars)
+        // RELOAD INIT warning: KMotionCNC's Z/C scale doesn't match the loaded init
+        // (PendantService CheckInitScale). Shown until the init is reloaded.
+        public const string TpBadL1        = "RELOAD";
+        public const string TpBadL2        = "INIT!";
         public const string InitNameStd    = "Standard";  // identity 1
         public const string InitNameKnee   = "Knee Z";    // identity 2
-        public const string InitNamePcb    = "PCB";       // identity 3
+        public const string InitNameHss    = "HSS";       // identity 3 (High Speed Spindle; was PCB)
         public const string InitNameUnknown= "Init?";     // identity 0/unknown (init without var 56)
 
         // ===== 10b. Button prompt / label text (line 1 + line 2), all editable.

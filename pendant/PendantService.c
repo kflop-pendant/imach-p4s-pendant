@@ -124,6 +124,11 @@
 #define TP_HOLD_REQ    56  /* in : init asks for exclusive PC_COMM ownership */
 #define TP_HOLD_ACK    57  /* out: this service granted; init may proceed    */
 #define UD_ESTOP_REQ   59  /* in : init raises while hardware E-stop (bit 143) is asserted; edge-relayed to DoPC(PC_COMM_ESTOP) */
+#define UD_INIT_ID     58  /* in : loaded init identity (1 Std / 2 Knee Z / 3 HSS; negative while loading) */
+#define UD_TP_BAD      68  /* out: 1 = KMotionCNC's Z/C counts-per-inch don't match the loaded init, or the init
+                                   is no longer running (KMotionCNC's STOP kills threads 2-7) -> RELOAD INIT */
+#define UD_THREADS     69  /* out: raw KFLOP ThreadActive mask (bit n = thread n running), for diagnostics */
+#define INIT_THREAD    4   /* all three inits run on Thread 4 (KMotionCNC Tool Setup, M110-M112) */
 
 /* Included by BASENAME: the build deploys KflopToKMotionCNCFunctions.c next to this
  * file (and the exe) in KMotion\Release64, so the KFLOP C compiler resolves it
@@ -169,12 +174,15 @@ int lastMachLabel = -1;
  * does NOT false-trip on a slow PC round-trip (which is what crashed the link
  * when the zero used the stock MDI()). A 3 s timeout guard prevents any hang.
  * Returns 0 on success, <0 on interpreter error, -999 on timeout. */
+int PC_Busy(void);
+
 int MDI_KeepAlive(char *s)
 {
     char  *p = (char *)gather_buffer + GATH_OFF * sizeof(int);
     double tout;
     int    result;
 
+    if (PC_Busy()) return -998;                          /* earlier request unanswered */
     do { *p++ = *s++; } while (s[-1]);                 /* copy G-code to gather buffer */
 
     persist.UserData[PC_COMM_PERSIST + 1] = GATH_OFF;    /* MDI arg = gather offset */
@@ -222,6 +230,202 @@ int DoPC_KeepAlive(int cmd)
     return result;                                     /* 0 = ok, <0 = KMotionCNC error */
 }
 
+/* ---- Non-blocking PC_COMM (2026-09-28) --------------------------------------
+ * While KMotionCNC shows a modal dialog (Tool Setup, File Open, ...) it stops
+ * answering PC_COMM. The stock DoPC() waits forever, so this thread froze, the
+ * heartbeat stalled, and the bridge declared the link lost and restarted (the
+ * pendant flash / bridge window on every Tool Setup). Every request now goes
+ * through PC_Issue: it refuses to post while an earlier request is still
+ * unanswered (so a late answer can never be confused with a new request, and a
+ * stale button command can never fire when the dialog closes), and waits with
+ * the heartbeat ticking, giving up after a timeout. Routine polls just skip a
+ * pass; commands fail cleanly (-998 busy / -999 timeout -> pendant shows error).
+ * The E-stop/Halt relay keeps using DoPC_KeepAlive, which posts regardless. */
+#define PC_POLL_TOUT   0.5         /* DROs / fixture / scale check            */
+#define PC_CMD_TOUT    3.0         /* pendant button commands                 */
+
+/* ---- PC_COMM response-time measurement (2026-09-29, diagnostic) -------------
+ * How long KMotionCNC takes to answer each request posted through PC_Issue --
+ * including requests that timed out and were answered later -- so Tom can see
+ * where it stops servicing PC_COMM (Tool Setup / File Open opening?).
+ *   UD 70 = longest wait seen (s)       UD 71 = PC_COMM command of that wait
+ *   UD 72 = number of waits over 0.5 s  UD 73 = write 1 to reset all three
+ * Observe-only: nothing here changes how requests are issued. */
+#define UD_PC_MAXWAIT   70
+#define UD_PC_MAXCMD    71
+#define UD_PC_SLOWCOUNT 72
+#define UD_PC_RESET     73
+double pcIssueT = 0.0;
+int    pcIssueCmd = 0, pcPending = 0;
+
+void PC_Answered(void)
+{
+    double dur;
+    if (!pcPending) return;
+    pcPending = 0;
+    dur = Time_sec() - pcIssueT;
+    if (dur > GetUserDataDouble(UD_PC_MAXWAIT))
+    {
+        SetUserDataDouble(UD_PC_MAXWAIT, dur);
+        SetUserDataDouble(UD_PC_MAXCMD, (double)pcIssueCmd);
+    }
+    if (dur > 0.5) SetUserDataDouble(UD_PC_SLOWCOUNT, GetUserDataDouble(UD_PC_SLOWCOUNT) + 1.0);
+}
+
+int PC_Busy(void)
+{
+    if ((int)GetUserDataDouble(UD_PC_RESET))
+    {
+        SetUserDataDouble(UD_PC_MAXWAIT, 0.0); SetUserDataDouble(UD_PC_MAXCMD, 0.0);
+        SetUserDataDouble(UD_PC_SLOWCOUNT, 0.0); SetUserDataDouble(UD_PC_RESET, 0.0);
+    }
+    if (persist.UserData[PC_COMM_PERSIST] > 0) return 1;   /* request posted, not yet answered */
+    PC_Answered();                                         /* a late answer to a timed-out request */
+    return 0;
+}
+
+int PC_Wait(double tout)
+{
+    int    result;
+    double t_end = Time_sec() + tout;
+    do
+    {
+        WaitNextTimeSlice();
+        beat += 1.0;                                   /* keep the heartbeat alive */
+        SetUserDataDouble(UD_HEARTBEAT, beat);
+        result = persist.UserData[PC_COMM_PERSIST];
+        if (Time_sec() > t_end) return -999;           /* no answer (dialog open?) */
+    } while (result > 0);
+    PC_Answered();
+    return result;                                     /* 0 = ok, <0 = KMotionCNC error */
+}
+
+/* post cmd with an integer argument (persist+1); extra args must be set first */
+int PC_Issue(int cmd, int arg, double tout)
+{
+    if (PC_Busy()) return -998;
+    persist.UserData[PC_COMM_PERSIST + 1] = arg;
+    pcIssueT = Time_sec(); pcIssueCmd = cmd; pcPending = 1;
+    persist.UserData[PC_COMM_PERSIST]     = cmd;
+    return PC_Wait(tout);
+}
+
+int PC_IssueFloat(int cmd, float f, double tout)
+{
+    return PC_Issue(cmd, *(int *)&f, tout);
+}
+
+int GetDROs_NB(double *d)
+{
+    int i;
+    if (PC_Issue(PC_COMM_GET_DROS, TMP, PC_POLL_TOUT)) return 1;
+    for (i = 0; i < 6; i++) d[i] = GetUserDataDouble(TMP + i);
+    return 0;
+}
+
+int GetFixtureIndex_NB(int *FixtureIndex)
+{
+    if (PC_Busy()) return 1;
+    persist.UserData[PC_COMM_PERSIST + 2] = 1;         /* number of Vars    */
+    persist.UserData[PC_COMM_PERSIST + 3] = TMP;       /* persist offset    */
+    if (PC_Issue(PC_COMM_GET_VARS, 5220, PC_POLL_TOUT)) return 1;
+    *FixtureIndex = (int)GetUserDataDouble(TMP);
+    return 0;
+}
+
+/* ---- RELOAD INIT check (2026-09-27) ----------------------------------------
+ * The inits set KMotionCNC's Trajectory Planner counts-per-inch for Z and C at
+ * load time (SetTPParameter): Standard puts the quill on Z, Knee Z / HSS put the
+ * knee on Z. Those values live only in KMotionCNC's memory, so if KMotionCNC is
+ * restarted while the init keeps running on the KFLOP, it reverts to the values
+ * in its config file (Standard's) until the init is loaded again -- and with the
+ * knee driven at the quill's scale every Z move is ~42% of what was programmed
+ * (2026-09-27, init then named PCB: holes drilled shallow after a KMotionCNC restart). The screen
+ * even still said "PCB init LOADED" (the init repaints it on reconnect).
+ *
+ * Once a second this reads ONE of the two values (alternating Z / C, to keep each
+ * pass short) and compares it with what the loaded init sets. Two consecutive
+ * mismatches on an axis -> "RELOAD <init> INIT!" on the screen label (Var 170)
+ * and UD_TP_BAD = 1 for the pendant LCD; when they match again the normal label
+ * comes back. Skipped while no init is loaded or one is loading (var 58 <= 0),
+ * so an init's own TP block can't trip it.
+ *
+ * KEEP IN SYNC with the SetTPParameter(PT_COUNTS_PER_INCH, ...) values in
+ * kflop-init\JPB - Standard.c / Knee Z.c / HSS.c. */
+#define TP_CHECK_SEC   1.0
+#define TP_CPI_KNEE    427000.0
+#define TP_CPI_QUILL   180000.0
+
+/* GetTPParameter, but heartbeat-friendly like DoPC_KeepAlive: ticks UD_HEARTBEAT
+ * while KMotionCNC answers and gives up after 1 s. Returns 0 on success. */
+int GetTPParameter_KeepAlive(int type, int axis, double *value)
+{
+    int result;
+
+    if (PC_Busy()) return -998;
+    persist.UserData[PC_COMM_PERSIST + 3] = TMP;       /* reply lands at TMP (doubles) */
+    persist.UserData[PC_COMM_PERSIST + 2] = axis;
+    result = PC_Issue(PC_COMM_GET_TP_PARAM, type, 1.0);
+    if (result != 0) return result;
+    *value = GetUserDataDouble(TMP);
+    return 0;
+}
+
+void CheckInitScale(void)
+{
+    static double next = 0.0;
+    static int    turn = 0, badZ = 0, badC = 0, badT = 0, shown = 0;
+    int    ident, bad;
+    double want, got, t;
+    char   s[40];
+    char  *name;
+
+    t = Time_sec();
+    if (t < next) return;
+    next = t + TP_CHECK_SEC;
+
+    SetUserDataDouble(UD_THREADS, (double)ThreadActive);
+
+    ident = (int)GetUserDataDouble(UD_INIT_ID);
+    if (ident < 1 || ident > 3) return;                /* none loaded / one is loading */
+
+    /* The init must still be RUNNING: KMotionCNC's STOP button kills user threads
+     * 2-7, taking the init (limit watch, backup E-stop, drive enable, spindle
+     * interlocks) with it, while its identity stays published. Needs no PC_COMM. */
+    badT = (ThreadActive & (1 << INIT_THREAD)) ? 0 : badT + 1;
+
+    if (turn == 0) want = (ident == 1) ? TP_CPI_QUILL : TP_CPI_KNEE;   /* Z */
+    else           want = (ident == 1) ? TP_CPI_KNEE  : TP_CPI_QUILL;  /* C */
+
+    if (GetTPParameter_KeepAlive(PT_COUNTS_PER_INCH, turn == 0 ? AXIS_Z : AXIS_C, &got) == 0)
+    {
+        bad = (got < want - 0.5 || got > want + 0.5);
+        if (turn == 0) badZ = bad ? badZ + 1 : 0;
+        else           badC = bad ? badC + 1 : 0;
+    }
+    turn ^= 1;
+
+    name = (ident == 1) ? "STANDARD" : (ident == 2) ? "KNEE Z" : "HSS";
+    if (badZ >= 2 || badC >= 2 || badT >= 2)
+    {
+        /* rewritten every check: KMotionCNC re-seeds the label when it reloads its screen */
+        sprintf(s, "RELOAD %s INIT!", name);
+        DROLabel(1100, 170, s);
+        shown = 1;
+        SetUserDataDouble(UD_TP_BAD, 1.0);
+    }
+    else if (badZ == 0 && badC == 0 && badT == 0)
+    {
+        if (shown)
+        {
+            sprintf(s, "%s init LOADED", name);
+            DROLabel(1100, 170, s);
+            shown = 0;
+        }
+        SetUserDataDouble(UD_TP_BAD, 0.0);
+    }
+}
+
 main()
 {
     int    FixtureIndex, req, axis, cmd, res, i, ok, attempt;
@@ -244,6 +448,21 @@ main()
          * we ack. Init clears TP_HOLD_REQ when its block is done. */
         if ((int)GetUserDataDouble(TP_HOLD_REQ))
         {
+            /* ...except that since PC_Issue gives up waiting (2026-09-28), a request
+             * that timed out is still posted in the mailbox until KMotionCNC answers
+             * it -- answers that take 0.5-0.9 s do happen. Acking then let that late
+             * answer (KMotionCNC writes 0 to cell 100) land on top of the requester's
+             * own command: 2026-10-01 the init gate's MsgBox was swallowed (no dialog,
+             * "init cancelled"). So let the mailbox be answered first (heartbeat
+             * alive; after 5 s ack anyway -- the requester has its own fail-safe). */
+            double t_free = Time_sec() + 5.0;
+            while (persist.UserData[PC_COMM_PERSIST] > 0 && Time_sec() < t_free)
+            {
+                WaitNextTimeSlice();
+                beat += 1.0;
+                SetUserDataDouble(UD_HEARTBEAT, beat);
+            }
+            PC_Answered();
             SetUserDataDouble(TP_HOLD_ACK, 1.0);
             while ((int)GetUserDataDouble(TP_HOLD_REQ))
             {
@@ -282,12 +501,15 @@ main()
         /* 1 + 2. publish live work DROs and active fixture.
          *        (GetDROs / GetFixtureIndex scribble on TMP..TMP+5 = 30..35,
          *         which is clear of everything below.) */
-        GetDROs(&dro[0], &dro[1], &dro[2], &dro[3], &dro[4], &dro[5]);
-        for (i = 0; i < 6; i++)
-            SetUserDataDouble(UD_DRO + i, dro[i]);
+        /*        Non-blocking (PC_Issue): while KMotionCNC has a dialog open these
+         *        simply skip -- the last values stay published -- instead of
+         *        freezing this thread and stalling the heartbeat. */
+        if (GetDROs_NB(dro) == 0)
+            for (i = 0; i < 6; i++)
+                SetUserDataDouble(UD_DRO + i, dro[i]);
 
-        GetFixtureIndex(&FixtureIndex);
-        SetUserDataDouble(UD_FIXTURE, (double)FixtureIndex);
+        if (GetFixtureIndex_NB(&FixtureIndex) == 0)
+            SetUserDataDouble(UD_FIXTURE, (double)FixtureIndex);
 
         /* 2b. publish the live enable state of the ACTIVE spindle for the LCD
          *     prompt. Cheap local read of the commanded output bit; reflects
@@ -297,6 +519,10 @@ main()
          *     always watched 156, so with the big spindle running it reported
          *     'off' and offered START?. */
         SetUserDataDouble(UD_SPINDLE, (double)ReadBit(ActiveSpindleBit()));
+
+        /* 2b2. RELOAD INIT check: KMotionCNC's Z/C scale vs the loaded init
+         *      (once a second, one axis at a time; see CheckInitScale). */
+        CheckInitScale();
 
         /* 2c. publish the live machine (axes) enable state for the LCD prompt and
          *     the KMotionCNC screen indicator. chan[0].Enable reflects the F3 toggle
@@ -330,11 +556,11 @@ main()
         {
             arg = GetUserDataDouble(UD_CMD_ARG);
             res = -1;
-            if      (cmd == CMD_EXECUTE) res = DoPC(PC_COMM_EXECUTE);
+            if      (cmd == CMD_EXECUTE) res = PC_Issue(PC_COMM_EXECUTE, 0, PC_CMD_TOUT);
             else if (cmd == CMD_ESTOP)   res = DoPC_KeepAlive(PC_COMM_ESTOP);
-            else if (cmd == CMD_HALT)    res = DoPC(PC_COMM_HALT);
-            else if (cmd == CMD_MCODE)   res = DoPCInt(PC_COMM_MCODE, (int)arg);
-            else if (cmd == CMD_FRO_INC) res = DoPCFloat(PC_COMM_SET_FRO_INC, (float)arg);
+            else if (cmd == CMD_HALT)    res = DoPC_KeepAlive(PC_COMM_HALT);   /* priority: posts regardless */
+            else if (cmd == CMD_MCODE)   res = PC_Issue(PC_COMM_MCODE, (int)arg, PC_CMD_TOUT);
+            else if (cmd == CMD_FRO_INC) res = PC_IssueFloat(PC_COMM_SET_FRO_INC, (float)arg, PC_CMD_TOUT);
             else if (cmd == CMD_SPINDLE)
             {
                 /* Direct enable-bit toggle - NOT an M-code. Unconditional and
@@ -357,7 +583,7 @@ main()
                  * owns (1.0 = 100% = commanded S); KMotionCNC re-applies it to the
                  * S->DAC output. Set-only (KMotionCNC has no read-SSO), benign,
                  * twin of the feed-override path -- NOT the interpreter. */
-                res = DoPCFloat(PC_COMM_SET_SSO, (float)arg);
+                res = PC_IssueFloat(PC_COMM_SET_SSO, (float)arg, PC_CMD_TOUT);
             }
             else if (cmd == CMD_ZERO)
             {
@@ -371,7 +597,7 @@ main()
                 axis = (int)arg;
                 if (axis >= 0 && axis <= 5)
                 {
-                    res = DoPCFloat(PC_COMM_SET_X + axis, 0.0F);
+                    res = PC_IssueFloat(PC_COMM_SET_X + axis, 0.0F, PC_CMD_TOUT);
                 }
                 else res = -1;
             }
@@ -424,7 +650,7 @@ main()
             SetUserDataDouble(UD_CMD_REQ, (double)CMD_NONE);
         }
 
-        /* 5. heartbeat + pacing (GetDROs already blocks on the ~10 Hz channel) */
+        /* 5. heartbeat + pacing (GetDROs_NB waits on the ~10 Hz channel) */
         beat += 1.0;
         SetUserDataDouble(UD_HEARTBEAT, beat);
         Delay_sec(0.02);

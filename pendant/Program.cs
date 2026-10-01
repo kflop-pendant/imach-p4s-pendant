@@ -6,7 +6,7 @@
  *   1. open the pendant (retry until present);
  *   2. wait for the KFLOP to answer (retry until powered / reachable);
  *   3. wait for an init to publish its config id at UserData double-index 54
- *      (1 = Standard / quill-on-ch2, 2 = PCB or Knee-Z / knee-on-ch2). That one
+ *      (1 = Standard / quill-on-ch2, 2 = HSS or Knee-Z / knee-on-ch2). That one
  *      value is BOTH the "init has run" signal AND the knee/quill selector, so a
  *      single build is correct for whichever init you load. It is NOT cleared:
  *      the inits run a forever loop, so 54 always reflects the live config.
@@ -130,6 +130,13 @@ namespace iMachKflop
                         Console.WriteLine("KFLOP link lost -- exiting. Power-cycle the controller and relaunch the pendant.");
                         SafeLcd(pendant, Tune.LinkLostL1, Tune.LinkLostL2);
                     }
+                    else if (reason == BridgeExit.CncRestarted)
+                    {
+                        // KMotionCNC closed, crashed or was restarted. Exit clean so the
+                        // supervisor relaunches the bridge fresh for the next session.
+                        Console.WriteLine("KMotionCNC closed or restarted -- exiting so the bridge starts fresh.");
+                        SafeLcd(pendant, Tune.WaitCncL1, Tune.WaitCncL2);
+                    }
                     else if (reason == BridgeExit.PendantLost)
                     {
                         // Pendant input (USB) stopped: the watchdog already stopped any
@@ -248,7 +255,12 @@ namespace iMachKflop
         // Is KMotionCNC actually running? (process name from Tune, no .exe)
         static bool CncRunning()
         {
-            try { return Process.GetProcessesByName(Tune.CncProcessName).Length > 0; }
+            try
+            {
+                foreach (string name in Tune.CncProcessNames)
+                    if (Process.GetProcessesByName(name).Length > 0) return true;
+                return false;
+            }
             catch { return false; }
         }
 

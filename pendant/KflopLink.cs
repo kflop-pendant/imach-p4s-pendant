@@ -10,7 +10,7 @@
  * TWO INDEX SPACES: JOG = KFLOP CHANNEL (GetAxis) ; DRO = COORDINATE slot. A
  * selection carries both. Which physical axis is on ch2/ch3 is chosen at RUNTIME
  * from the init's config id (UserData double-index 54: 1 = Standard/quill-on-ch2,
- * 2 = PCB or Knee-Z/knee-on-ch2); Tune.KneeOnCh2 is only a fallback.
+ * 2 = HSS or Knee-Z/knee-on-ch2); Tune.KneeOnCh2 is only a fallback.
  * UNITS: the raw KFLOP console commands (JogAtAccel / MoveRelAtVelAccel) operate
  * in COUNTS, so this file converts: counts/sec = ipm/60 * Cpi, counts = inches *
  * Cpi; acceleration is Tune's raw counts value passed straight through.
@@ -48,9 +48,9 @@ namespace iMachKflop
         const int UD_CMD_REQ   = 47;
         const int UD_CMD_ARG   = 48;
         const int UD_CMD_STAT  = 49;
-        const int UD_CONFIG    = 54;   // init publishes 1 (Standard) or 2 (PCB/Knee-Z) -- knee/quill resolver
+        const int UD_CONFIG    = 54;   // init publishes 1 (Standard) or 2 (HSS/Knee-Z) -- knee/quill resolver
         const int UD_SPINDLE   = 55;   // PendantService publishes live spindle enable (ReadBit 156)
-        const int UD_INIT_ID   = 58;   // init publishes its identity for the LCD banner (1 Std / 2 Knee Z / 3 PCB).
+        const int UD_INIT_ID   = 58;   // init publishes its identity for the LCD banner (1 Std / 2 Knee Z / 3 HSS).
                                        // NOT 56/57 -- those are the init<->service TP_HOLD_REQ/ACK handshake.
         const int UD_GOTOZ_CLEAR = 62; // GOTOZ params (bridge -> service, written once at connect)
         const int UD_GOTOZ_IPMZ  = 63;
@@ -58,6 +58,7 @@ namespace iMachKflop
         const int UD_MACHINE     = 65; // live machine (axes) enable, published by the service
         const int UD_SCREEN_TOGGLE = 66; // screen "Machine Status" button -> bridge: 1 = toggle requested
         const int UD_WATCH_HB      = 67; // EStopWatch.c liveness heartbeat (bridge verifies at load)
+        const int UD_TP_BAD        = 68; // PendantService: 1 = KMotionCNC's Z/C scale doesn't match the loaded init (RELOAD INIT)
 
         const int CMD_NONE = 0, CMD_EXECUTE = 1, CMD_ESTOP = 2,
                   CMD_HALT = 3, CMD_MCODE = 4, CMD_FRO_INC = 5, CMD_SPINDLE = 6, CMD_SSO = 7, CMD_ZERO = 8, CMD_GOTOZ = 9, CMD_MACHINE = 10;
@@ -124,7 +125,7 @@ namespace iMachKflop
 
         bool _kneeOnCh2 = Tune.KneeOnCh2;          // set from the runtime config id in Connect()
         int  _configId;                            // init config id in effect (1 Standard / 2 Knee-Z); re-read mid-session
-        int  _initId;                              // init IDENTITY in effect (1 Std / 2 Knee Z / 3 PCB); for the LCD banner
+        int  _initId;                              // init IDENTITY in effect (1 Std / 2 Knee Z / 3 HSS); for the LCD banner
         bool _primed;                              // StatusUpdateInterval applied once
 
         // MONOTONIC process clock -- deliberately NOT Environment.TickCount.
@@ -195,7 +196,7 @@ namespace iMachKflop
         }
 
         // The init-published config id at UserData double-index 54.
-        // 1 = Standard (quill on ch2), 2 = PCB / Knee-Z (knee on ch2), 0 = not set / unreadable.
+        // 1 = Standard (quill on ch2), 2 = HSS / Knee-Z (knee on ch2), 0 = not set / unreadable.
         public int ReadConfigId()
         {
             try
@@ -208,8 +209,8 @@ namespace iMachKflop
         }
 
         // The init-published IDENTITY at UserData double-index 58 (for the LCD banner):
-        // 1 = Standard, 2 = Knee Z, 3 = PCB, 0 = not set / unreadable (init without var 58).
-        // Distinct per init, so it changes on EVERY init load -- including Knee Z <-> PCB,
+        // 1 = Standard, 2 = Knee Z, 3 = HSS, 0 = not set / unreadable (init without var 58).
+        // Distinct per init, so it changes on EVERY init load -- including Knee Z <-> HSS,
         // which share config id 2 and so are indistinguishable from var 54 alone. (Index 58,
         // not 56: 56/57 are the init<->service TP_HOLD handshake, which briefly sets 56=1
         // mid-load -- reading identity there mis-fired a spurious "Standard" banner.)
@@ -220,7 +221,7 @@ namespace iMachKflop
         }
 
         // Raw init state at var 58, including the LOADING phase: each init writes the
-        // NEGATIVE of its identity (-1 Std / -2 Knee Z / -3 PCB) as the first thing in
+        // NEGATIVE of its identity (-1 Std / -2 Knee Z / -3 HSS) as the first thing in
         // main(), then the positive identity after its TP block. So -3..-1 = that init
         // is loading, 1..3 = loaded, 0 = not set / unreadable / out of range.
         public int ReadInitState()
@@ -232,6 +233,19 @@ namespace iMachKflop
                 return (id >= -3 && id <= 3) ? id : 0;
             }
             catch { return 0; }
+        }
+
+        // RELOAD INIT flag from PendantService (CheckInitScale): KMotionCNC's Z/C
+        // counts-per-inch no longer match the loaded init -- typically KMotionCNC was
+        // restarted while the init kept running, so it reverted to its config file.
+        public bool ReadTpBad()
+        {
+            try
+            {
+                EnsureController();
+                return _km.GetUserDataDouble(UD_TP_BAD) >= 0.5;
+            }
+            catch { return false; }
         }
 
         // Called when the link is known lost so teardown does NOT poke a dead
@@ -296,7 +310,7 @@ namespace iMachKflop
             // real values in the Z/C rows; then Cpu!=0 and this block is skipped.)
             if (_sel[AxZ].Cpi == 0.0)
             {
-                if (_kneeOnCh2)   // PCB / Knee-Z: knee on ch2 (Z), quill on ch3 (C)
+                if (_kneeOnCh2)   // HSS / Knee-Z: knee on ch2 (Z), quill on ch3 (C)
                 {
                     ApplyVertical(AxZ, Tune.CpiKnee,  Tune.IpmKnee,  Tune.JogAccKnee,  Tune.StepAccKnee);
                     ApplyVertical(AxC, Tune.CpiQuill, Tune.IpmQuill, Tune.JogAccQuill, Tune.StepAccQuill);
@@ -339,13 +353,13 @@ namespace iMachKflop
         // The init config id currently in effect (1 Standard / 2 Knee-Z).
         public int ConfigId => _configId;
 
-        // The init identity currently in effect (1 Standard / 2 Knee Z / 3 PCB; 0 unknown).
+        // The init identity currently in effect (1 Standard / 2 Knee Z / 3 HSS; 0 unknown).
         public int InitId => _initId;
 
         // Apply a mid-session init change: record the new IDENTITY (var 56) and re-resolve
         // knee/quill from the current config id (var 54). Returns true iff the identity
         // actually changed (drives the LCD banner). The knee/quill re-resolve is a no-op
-        // for a Knee Z <-> PCB swap (both config id 2) -- correct, only the name changes.
+        // for a Knee Z <-> HSS swap (both config id 2) -- correct, only the name changes.
         // Rejects an invalid/unknown identity. Caller ensures it's safe (idle, not jogging).
         public bool ApplyInit(int initId, int configId)
         {

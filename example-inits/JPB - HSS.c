@@ -79,14 +79,14 @@ int main()
 	// pulse anyway, since not all axes are enabled yet. If the shuttering
 	// returns, restore SetBit(154) here and ClearBit(154) below.)
 
-	// Screen init readout (Var 170): show "PCB LOADING..." the moment this
+	// Screen init readout (Var 170): show "HSS LOADING..." the moment this
 	// init starts, so the ~6s of drive reset/settle below and the TP block don't
 	// look like a missed click. Replaced by "init LOADED" / "TP FAIL!!" after the
 	// TP block. DROLabel is a plain gather/persist write (no PC_COMM), so it can't
 	// race PendantService. Every Var 170 write in this file uses gather offset
 	// 1100, clear of the Var 172 Control-lock label (1000, PendantService) and
 	// MDI_KeepAlive (1024), so the two readouts can never swap text.
-	DROLabel(1100, 170, "PCB LOADING...");
+	DROLabel(1100, 170, "HSS LOADING...");
 	SetUserDataDouble(58, -3.0);	// pendant LCD "<name> / Loading" -- NEGATIVE identity =
 									// loading; +3 is published after the TP block (var 58)
 
@@ -429,7 +429,7 @@ FPGA(STEP_PULSE_LENGTH_ADD)=32 + 0x40 + 0x80;
 	// of that block, just before the forever loop.
 
 	
-	// "PCB init LOADED" DROLabel is deferred to AFTER the TP block
+	// "HSS init LOADED" DROLabel is deferred to AFTER the TP block
 	// (2026-07-23 finding: with the DROLabel here, an operator watching the
 	// screen could press a new init while this one's TP block was still
 	// running, killing Thread 4 mid-write and leaving Z/C swapped or with
@@ -485,6 +485,12 @@ FPGA(STEP_PULSE_LENGTH_ADD)=32 + 0x40 + 0x80;
 			WaitNextTimeSlice();
 			if (Time_sec() - _hold_wait_start > 2.0) break;
 		}
+		// Never post over an unanswered request (e.g. a PendantService poll that timed
+		// out): KMotionCNC's late answer would clear OUR command, so a SetTPParameter
+		// could be lost (2026-10-01: the init gate's MsgBox was swallowed this way).
+		_hold_wait_start = Time_sec();
+		while (persist.UserData[PC_COMM_PERSIST] > 0 && Time_sec() - _hold_wait_start < 3.0)
+			WaitNextTimeSlice();
 
 		rcZcpi = SetTPParameter(PT_COUNTS_PER_INCH, AXIS_Z, 427000.0);
 		GetTPParameter(PT_COUNTS_PER_INCH, AXIS_Z, &vZ);
@@ -495,7 +501,7 @@ FPGA(STEP_PULSE_LENGTH_ADD)=32 + 0x40 + 0x80;
 		printf("SET C cnts/inch rc=%d  GET C=%.0f  (want 180000)\n", rcCcpi, vC);
 
 		// Vel/Accel — AXIS_Z is bound to ch2 (per DefineCoordSystem6 above),
-		// AXIS_C to ch3. PCB: ch2 is the knee (427000 cpi), ch3 is the quill
+		// AXIS_C to ch3. HSS: ch2 is the knee (427000 cpi), ch3 is the quill
 		// (180000 cpi). Physically opposite of Standard.
 		rcZv = SetTPParameter(PT_VEL,   AXIS_Z, ch2->Vel   / 427000.0);
 		rcZa = SetTPParameter(PT_ACCEL, AXIS_Z, ch2->Accel / 427000.0);
@@ -508,7 +514,7 @@ FPGA(STEP_PULSE_LENGTH_ADD)=32 + 0x40 + 0x80;
 
 		// Jog velocities — swap per config (Tom Kerekes 2026-07-24 added
 		// PT_JOG_VEL, Type=3). Hardcoded absolute in/sec values, independent
-		// of Max Vel. PCB: Z=knee 0.08 in/s (4.8 IPM), C=quill 0.3 in/s
+		// of Max Vel. HSS: Z=knee 0.08 in/s (4.8 IPM), C=quill 0.3 in/s
 		// (18 IPM). Values chosen to match Jim's previous manual settings.
 		rcZj = SetTPParameter(PT_JOG_VEL, AXIS_Z, 0.08);
 		rcCj = SetTPParameter(PT_JOG_VEL, AXIS_C, 0.3);
@@ -541,7 +547,7 @@ FPGA(STEP_PULSE_LENGTH_ADD)=32 + 0x40 + 0x80;
 			       vZ, vZ2, vC, vC2);
 		printf(">>> VERIFY Tool Setup | Trajectory Planner shows Z=427000 C=180000 plus per-axis Vel/Accel\n");
 
-		// Screen "PCB init LOADED" indicator, deferred to here so it only
+		// Screen "HSS init LOADED" indicator, deferred to here so it only
 		// fires once TP setup is complete (see comment above). Made
 		// CONDITIONAL on TP verification: if any of the six SETs returned
 		// nonzero or the delayed re-read doesn't match the expected values,
@@ -553,12 +559,12 @@ FPGA(STEP_PULSE_LENGTH_ADD)=32 + 0x40 + 0x80;
 			    rcZj == 0 && rcCj == 0 &&
 			    vZ2 == 427000.0 && vC2 == 180000.0)
 			{
-				sprintf(_s, "PCB init LOADED");
+				sprintf(_s, "HSS init LOADED");
 				TP_verified = 1;
 			}
 			else
 			{
-				sprintf(_s, "PCB TP FAIL!!");
+				sprintf(_s, "HSS TP FAIL!!");
 				TP_verified = 0;
 			}
 			DROLabel(1100, 170, _s);
@@ -575,8 +581,8 @@ FPGA(STEP_PULSE_LENGTH_ADD)=32 + 0x40 + 0x80;
 	// is fully set up, so cold-start TP setup can't race the service. Kept OUTSIDE the
 	// TP verify if/else on purpose: a TP failure must NOT leave 54 unpublished, or the
 	// bridge would wait forever and the pendant would go dead.
-	SetUserDataDouble(54, 2.0);	// PCB: knee on ch2, quill on ch3
-	SetUserDataDouble(58, 3.0);	// pendant init identity -> LCD banner name: 3 = PCB  (var 58; NOT 56 = TP_HOLD_REQ)
+	SetUserDataDouble(54, 2.0);	// HSS: knee on ch2, quill on ch3
+	SetUserDataDouble(58, 3.0);	// pendant init identity -> LCD banner name: 3 = HSS  (var 58; NOT 56 = TP_HOLD_REQ)
 
 	for (;;)  				 		  	// loop forever
 	{
@@ -693,9 +699,9 @@ void WatchdogOK(void)			// Trips when KMotionCNC is open
 	{
 		char _s[80];
 		if (TP_verified)
-			sprintf(_s, "PCB init LOADED");
+			sprintf(_s, "HSS init LOADED");
 		else
-			sprintf(_s, "PCB TP FAIL!!");
+			sprintf(_s, "HSS TP FAIL!!");
 		DROLabel(1100, 170, _s);
 	}
 

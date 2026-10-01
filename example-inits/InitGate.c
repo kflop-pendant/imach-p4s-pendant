@@ -1,6 +1,6 @@
 /* InitGate.c ---------------------------------------------------------------
  *
- * Confirmation gate for the screen init buttons (Standard / Knee Z / PCB, and
+ * Confirmation gate for the screen init buttons (Standard / Knee Z / HSS, and
  * their F9 / F10 hotkeys). Loading an init restarts the drives and zeroes all
  * five DROs, so an accidental click on a set-up machine throws away the work
  * zero. The buttons run THIS program instead of the init; it decides whether
@@ -43,7 +43,7 @@
 #define UD_INIT_ID     58   /* double-index: init state (see above) */
 #define TP_HOLD_REQ    56   /* double-index: ask PendantService to pause PC_COMM */
 #define TP_HOLD_ACK    57   /* double-index: PendantService paused */
-#define INIT_MCODE_BASE 109 /* PC_COMM_MCODE takes the M number: 109 + init id -> M110 Std / M111 Knee Z / M112 PCB */
+#define INIT_MCODE_BASE 109 /* PC_COMM_MCODE takes the M number: 109 + init id -> M110 Std / M111 Knee Z / M112 HSS */
 
 #ifndef MB_DEFBUTTON2
 #define MB_DEFBUTTON2  0x00000100
@@ -53,7 +53,7 @@ char *InitName(int id)
 {
 	if (id == 1) return "STANDARD";
 	if (id == 2) return "KNEE Z";
-	if (id == 3) return "PCB";
+	if (id == 3) return "HSS";
 	return "UNKNOWN";
 }
 
@@ -87,6 +87,11 @@ int main()
 		WaitNextTimeSlice();
 		if (Time_sec() - t0 > 2.0) break;
 	}
+	/* Never post over an unanswered request: KMotionCNC's late answer to it would
+	   clear OUR command and the MsgBox would read as "No" (2026-10-01). */
+	t0 = Time_sec();
+	while (persist.UserData[PC_COMM_PERSIST] > 0 && Time_sec() - t0 < 3.0)
+		WaitNextTimeSlice();
 
 	if (state != 0)
 	{

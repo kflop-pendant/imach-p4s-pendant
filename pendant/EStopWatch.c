@@ -7,7 +7,7 @@
  *
  * WHY THIS EXISTS (root cause, 2026-07-29):
  * The E-stop response used to live only inside each machine init's forever
- * loop (JPB - Standard / Knee Z / PCB). Those inits are launched on KFLOP
+ * loop (JPB - Standard / Knee Z / HSS). Those inits are launched on KFLOP
  * threads that KMotionCNC ALSO launches M-codes onto (Standard=T2 shared
  * with Spindle_S/M3/M4/M5; Knee Z=T3 shared with the M102 Adaptive Logger).
  * KFLOP overwrites whatever program already occupies a thread when a new one

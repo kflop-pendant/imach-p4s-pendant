@@ -45,7 +45,7 @@ namespace iMachKflop
     // input (USB) loss. Program.cs branches on this -- LinkLost/PendantLost both
     // exit for Task Scheduler to relaunch, but only LinkLost can still paint the
     // LCD (on PendantLost the pendant is gone).
-    public enum BridgeExit { Stopped, LinkLost, PendantLost }
+    public enum BridgeExit { Stopped, LinkLost, PendantLost, CncRestarted }
 
     public sealed class Bridge
     {
@@ -130,7 +130,8 @@ namespace iMachKflop
         bool      _lastMachineEnabled = true;   // for detecting the on/off transition
         long      _machineOnMsgUntilMs;          // briefly show "Machine / ON" on re-enable
         long      _cfgMsgUntilMs;                // init-load banner window (name + "Loaded")
-        int       _cfgInitId;                    // which init identity that banner names (1 Std / 2 Knee Z / 3 PCB)
+        int       _cfgInitId;                    // which init identity that banner names (1 Std / 2 Knee Z / 3 HSS)
+        bool      _tpBad;                        // RELOAD INIT: KMotionCNC's Z/C scale doesn't match the init
         int       _loadingInitId;                // init currently LOADING (var 58 negative), 0 = none
         long      _loadingSinceMs;               // when that load was first seen (for InitLoadingMaxMs)
 
@@ -182,7 +183,16 @@ namespace iMachKflop
             _lastInputMs = NowMs;                          // arm the watchdog from a clean baseline
             bool linkLost    = false;
             bool pendantLost = false;
+            bool cncChanged  = false;
             int  upkeepThrows = 0;
+            // The KMotionCNC this session belongs to. If it closes, crashes or is
+            // replaced, exit so the supervisor restarts the bridge fresh (gate ->
+            // init prompt -> reload PendantService/EStopWatch). Since PendantService
+            // became non-blocking (2026-09-28) a vanished KMotionCNC no longer stalls
+            // the heartbeat, so without this the bridge carried stale session state
+            // into the next KMotionCNC (init selection broke until a manual restart).
+            int  cncPid = CncPid();
+            long nextCncCheckMs = NowMs + CncCheckMs;
 
             while (_run)
             {
@@ -254,6 +264,13 @@ namespace iMachKflop
                     _kflop.MarkLinkLost();                 // teardown must not poke a dead board
                     break;
                 }
+
+                // KMotionCNC closed / crashed / restarted (process id changed)?
+                if (NowMs >= nextCncCheckMs)
+                {
+                    nextCncCheckMs = NowMs + CncCheckMs;
+                    if (CncPid() != cncPid) { cncChanged = true; break; }
+                }
             }
 
             // Only stop the jog if the board is still alive. On a pendant loss the
@@ -262,7 +279,27 @@ namespace iMachKflop
             if (!linkLost) { try { if (_jogging) StopJog(); } catch { } }
             return linkLost    ? BridgeExit.LinkLost
                  : pendantLost ? BridgeExit.PendantLost
+                 : cncChanged  ? BridgeExit.CncRestarted
                  : BridgeExit.Stopped;
+        }
+
+        const int CncCheckMs = 1000;
+
+        // Process id of the running KMotionCNC (lowest, if more than one), 0 if none.
+        static int CncPid()
+        {
+            try
+            {
+                int pid = 0;
+                foreach (string name in Tune.CncProcessNames)
+                    foreach (var p in System.Diagnostics.Process.GetProcessesByName(name))
+                    {
+                        if (pid == 0 || p.Id < pid) pid = p.Id;
+                        p.Dispose();
+                    }
+                return pid;
+            }
+            catch { return -1; }
         }
 
         void UpdateWheelRate(int mpg)
@@ -720,7 +757,7 @@ namespace iMachKflop
 
             // Mid-session init swap: keyed on the init IDENTITY (var 56), which is
             // distinct per init, so it fires on EVERY init load -- including Knee Z <->
-            // PCB, which share config id 2. When a different identity is published AND
+            // HSS, which share config id 2. When a different identity is published AND
             // it's safe (machine idle, not jogging), re-resolve knee/quill live (from
             // var 54) and raise the LCD banner -- no bridge restart. The inits republish
             // 56 in a forever loop, so a change noticed while busy simply applies on the
@@ -765,6 +802,8 @@ namespace iMachKflop
                 }
                 else _pendingSteps = 0;
             }
+
+            _tpBad = _kflop.ReadTpBad();          // RELOAD INIT warning (PendantService CheckInitScale)
 
             _kflop.SnapshotWorkDros(_dro);
             _spindleOn = _kflop.SpindleOn();     // cache live spindle enable for the LCD + toggle
@@ -853,7 +892,7 @@ namespace iMachKflop
             {
                 case 1:  return Tune.InitNameStd;
                 case 2:  return Tune.InitNameKnee;
-                case 3:  return Tune.InitNamePcb;
+                case 3:  return Tune.InitNameHss;
                 default: return Tune.InitNameUnknown;
             }
         }
@@ -887,6 +926,16 @@ namespace iMachKflop
             if (NowMs < _cfgMsgUntilMs)
             {
                 _pendant.WriteLcd(Center(InitBannerName(_cfgInitId)), Center(Tune.InitLoadedL2), BuildIndicator());
+                return;
+            }
+
+            // RELOAD INIT: KMotionCNC's Z/C counts-per-inch don't match the loaded init
+            // (it was restarted while the init kept running). Every Z move would be the
+            // wrong size, so hold the whole screen until the init is reloaded -- except
+            // an armed confirm prompt, which must stay readable.
+            if (_tpBad && _kflop.Connected && _kflop.ServiceAlive && _armed == Arm.None)
+            {
+                _pendant.WriteLcd(Center(Tune.TpBadL1), Center(Tune.TpBadL2), BuildIndicator());
                 return;
             }
 

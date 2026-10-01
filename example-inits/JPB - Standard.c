@@ -482,6 +482,12 @@ FPGA(STEP_PULSE_LENGTH_ADD)=32 + 0x40 + 0x80;
 			WaitNextTimeSlice();
 			if (Time_sec() - _hold_wait_start > 2.0) break;
 		}
+		// Never post over an unanswered request (e.g. a PendantService poll that timed
+		// out): KMotionCNC's late answer would clear OUR command, so a SetTPParameter
+		// could be lost (2026-10-01: the init gate's MsgBox was swallowed this way).
+		_hold_wait_start = Time_sec();
+		while (persist.UserData[PC_COMM_PERSIST] > 0 && Time_sec() - _hold_wait_start < 3.0)
+			WaitNextTimeSlice();
 
 		rcZcpi = SetTPParameter(PT_COUNTS_PER_INCH, AXIS_Z, 180000.0);
 		GetTPParameter(PT_COUNTS_PER_INCH, AXIS_Z, &vZ);
@@ -493,7 +499,7 @@ FPGA(STEP_PULSE_LENGTH_ADD)=32 + 0x40 + 0x80;
 
 		// Vel/Accel — AXIS_Z is bound to ch2 (per DefineCoordSystem6 above),
 		// AXIS_C to ch3. Standard: ch2 is the quill (180000 cpi), ch3 is the
-		// knee (427000 cpi). PCB and Knee Z swap those physically.
+		// knee (427000 cpi). HSS and Knee Z swap those physically.
 		rcZv = SetTPParameter(PT_VEL,   AXIS_Z, ch2->Vel   / 180000.0);
 		rcZa = SetTPParameter(PT_ACCEL, AXIS_Z, ch2->Accel / 180000.0);
 		rcCv = SetTPParameter(PT_VEL,   AXIS_C, ch3->Vel   / 427000.0);

@@ -485,6 +485,12 @@ FPGA(STEP_PULSE_LENGTH_ADD)=32 + 0x40 + 0x80;
 			WaitNextTimeSlice();
 			if (Time_sec() - _hold_wait_start > 2.0) break;
 		}
+		// Never post over an unanswered request (e.g. a PendantService poll that timed
+		// out): KMotionCNC's late answer would clear OUR command, so a SetTPParameter
+		// could be lost (2026-10-01: the init gate's MsgBox was swallowed this way).
+		_hold_wait_start = Time_sec();
+		while (persist.UserData[PC_COMM_PERSIST] > 0 && Time_sec() - _hold_wait_start < 3.0)
+			WaitNextTimeSlice();
 
 		rcZcpi = SetTPParameter(PT_COUNTS_PER_INCH, AXIS_Z, 427000.0);
 		GetTPParameter(PT_COUNTS_PER_INCH, AXIS_Z, &vZ);
