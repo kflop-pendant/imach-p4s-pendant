@@ -156,6 +156,11 @@ behavior follows the manual; confirm grammar is hold-then-EN (hold the function
 key, then tap EN). The manual's double-tap "button jog" on F1/F2/F3 is
 intentionally not implemented -- see ../README.md.
 
+Simulate mode: with KMotionCNC's Simulate box ticked, the screen DROs turn white
+and stop following the machine and G-code/MDI don't move it, but the pendant still
+jogs the real machine, shows real coordinates and keeps its E-stop. It stays ticked
+across restarts -- if the DROs look frozen while the pendant works, untick Simulate.
+
 Adapting to a different pendant: `iMachKflop.exe --btnmap` prints the raw report
 and decoded bits so you can remap the buttons; `--ledmap` sweeps the LCD indicator
 byte. Both open only the pendant -- no KFLOP or machine power needed.

@@ -65,6 +65,15 @@ and acts. Even on a P4-SE, the hardware stop only exists if you've wired its 2-w
 into your machine's E-stop chain. **Axis stop through this bridge is software** and
 depends on KMotionCNC, the KFLOP init, and the bridge all running.
 
+**KMotionCNC's Simulate mode does not stop the pendant.** With **Simulate** ticked
+(beside the G-code viewer), KMotionCNC only simulates: its DROs turn **white** and show the
+simulated position instead of the machine's, and G-code runs and MDI commands don't move
+the machine. The pendant talks to the KFLOP directly, so it **keeps jogging the real
+machine**, its LCD keeps showing the real coordinates, and its E-stop keeps working (that
+last part is deliberate -- the pendant is never disabled). Simulate also stays ticked
+across KMotionCNC restarts. If the screen DROs are white and frozen while the pendant
+still moves the machine, untick Simulate.
+
 **The primary safety device on any machine is a hardwired physical E-stop wired directly
 into the drive/VFD enable chain, independent of any computer, USB, or program.** This
 pendant is a convenience; the hardwired button is the guarantee. The full safety

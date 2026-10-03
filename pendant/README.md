@@ -35,6 +35,15 @@ the bridge sees it and acts on it. Do not treat it as a primary safety device.
 **On a P4-SE without the 2-wire loop wired in.** Same as above — software-only. The
 pendant model doesn't help unless you've completed the wiring into a hardware chain.
 
+**KMotionCNC's Simulate mode does not stop the pendant.** With **Simulate** ticked
+(beside the G-code viewer), KMotionCNC only simulates: its DROs turn **white** and show the
+simulated position instead of the machine's, and G-code runs and MDI commands don't move
+the machine. The pendant talks to the KFLOP directly, so it **keeps jogging the real
+machine**, its LCD keeps showing the real coordinates, and its E-stop keeps working (that
+last part is deliberate -- the pendant is never disabled). Simulate also stays ticked
+across KMotionCNC restarts. If the screen DROs are white and frozen while the pendant
+still moves the machine, untick Simulate.
+
 **General principle.** The primary safety device on any machine is a hardwired
 physical E-stop button wired directly into the drive/VFD enable chain, independent
 of any computer, USB, or software program. The pendant is a convenience; the
@@ -219,3 +228,8 @@ wheel already jogs every axis in both directions.
 - **`DROLabel` passes its string through the gather buffer.** If you arm a gather-based
   diagnostic that overlaps the offsets in use, your screen labels will silently stop
   updating. Learned the hard way.
+- **Simulate mode looks like a frozen screen.** With KMotionCNC's **Simulate** box ticked,
+  the screen DROs turn white and stop following the machine, and programs/MDI don't move
+  it -- but the pendant still jogs the real machine and shows real coordinates on its LCD
+  (and its E-stop still works). It stays ticked across restarts. White, frozen DROs while
+  the pendant works = untick Simulate. See [Safety](#-safety).
