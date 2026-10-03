@@ -182,7 +182,7 @@ namespace iMachKflop
         {
             bool sawBoard = false;
             bool announcedKflop = false, announcedCnc = false, announcedInit = false;
-            bool promptLaunched = false;   // InitPrompt.c started for this KFLOP power-up
+            string promptedFor = null;     // KMotionCNC session InitPrompt.c was started for (this KFLOP power-up)
 
             while (!_stop)
             {
@@ -207,13 +207,17 @@ namespace iMachKflop
                     announcedKflop = false;
                     announcedCnc = false;
                     announcedInit = false;
-                    promptLaunched = false;   // a (re)appearing board may have been power-cycled
+                    promptedFor = null;       // a (re)appearing board may have been power-cycled
                 }
 
                 bool cnc = CncRunning();
                 int  id  = kflop.ReadConfigId();
 
-                if (cnc && (id == 1 || id == 2)) return id;
+                if (cnc && (id == 1 || id == 2))
+                {
+                    PromptIfNewCncSession(kflop);
+                    return id;
+                }
 
                 if (!cnc)
                 {
@@ -236,11 +240,15 @@ namespace iMachKflop
                     // Blink "CHOOSE init ->" on the screen while nothing is loaded. Only
                     // when no init has even STARTED since power-up (var 58 == 0) -- a
                     // negative value means one is loading, and the init owns the label.
-                    // Once per power-up: InitPrompt.c runs until an init starts, and
-                    // relaunching it would needlessly recompile. Failure is logged only.
-                    if (!promptLaunched && kflop.ReadInitState() == 0)
+                    // Once per KMotionCNC session (and per power-up): InitPrompt.c runs
+                    // until an init starts, but KMotionCNC can be closed and reopened
+                    // while we wait here, and the new session must blink too (2026-10-03).
+                    // Failure is logged only.
+                    string session = CncSessionKey();
+                    if (session != null && session != promptedFor && kflop.ReadInitState() == 0)
                     {
-                        promptLaunched = true;
+                        promptedFor = session;
+                        RememberCncSession(session);   // this session has been prompted
                         string err = kflop.LaunchPrompt(PromptCFile);
                         Console.WriteLine(err == null ? "No init loaded -- screen prompt \"CHOOSE init ->\" blinking."
                                                       : "Screen init prompt not started: " + err);
@@ -262,6 +270,63 @@ namespace iMachKflop
                 return false;
             }
             catch { return false; }
+        }
+
+        // ---- "CHOOSE init ->" for a NEW KMotionCNC session ------------------------
+        // Closing and reopening KMotionCNC leaves the init running on the KFLOP (var
+        // 58 > 0), but the new KMotionCNC has lost the init's settings (Z/C scale,
+        // TP velocities -- the RELOAD INIT case), so the init has to be loaded again.
+        // Once per KMotionCNC session (process id + start time, remembered in a file
+        // so a bridge restart within the same session doesn't prompt again) start the
+        // screen blinker; InitPrompt.c runs until an init load starts.
+        static readonly string CncSessionFile = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "PendantBridge", "cnc-session.txt");
+
+        static void PromptIfNewCncSession(KflopLink kflop)
+        {
+            string key = CncSessionKey();
+            if (key == null || key == LastPromptedCncSession()) return;
+            RememberCncSession(key);
+            if (kflop.ReadInitState() <= 0) return;   // none / loading: the wait loop or the init owns the label
+            string err = kflop.LaunchPrompt(PromptCFile);
+            Console.WriteLine(err == null ? "New KMotionCNC session with an init still on the KFLOP -- screen prompt \"CHOOSE init ->\" blinking."
+                                          : "Screen init prompt not started: " + err);
+        }
+
+        // "<pid>@<start time>" of the running KMotionCNC (lowest pid), null if none.
+        static string CncSessionKey()
+        {
+            try
+            {
+                Process best = null;
+                foreach (string name in Tune.CncProcessNames)
+                    foreach (var p in Process.GetProcessesByName(name))
+                    {
+                        if (best == null || p.Id < best.Id) { if (best != null) best.Dispose(); best = p; }
+                        else p.Dispose();
+                    }
+                if (best == null) return null;
+                using (best) return best.Id + "@" + best.StartTime.ToUniversalTime().Ticks;
+            }
+            catch { return null; }
+        }
+
+        static string LastPromptedCncSession()
+        {
+            try { return File.Exists(CncSessionFile) ? File.ReadAllText(CncSessionFile).Trim() : null; }
+            catch { return null; }
+        }
+
+        static void RememberCncSession(string key)
+        {
+            if (key == null) return;
+            try
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(CncSessionFile));
+                File.WriteAllText(CncSessionFile, key);
+            }
+            catch { }
         }
 
         static void SafeLcd(Pendant pendant, string l1, string l2)

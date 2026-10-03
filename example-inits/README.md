@@ -65,7 +65,8 @@ readout; all of it is optional and harmless without such a screen.
   a zero button — offsets persist in `emc.var`, so without this an axis zeroed in an earlier
   session comes up non-zero. (Loading an init therefore always clears the work zero.)
 - **"CHOOSE init ->" blink.** `pendant/InitPrompt.c`, launched by the bridge before any init is
-  loaded, blinks Var 170 until one starts. Make your screen's seed text for that readout
+  loaded -- and again whenever KMotionCNC is (re)opened, since a new KMotionCNC session has lost
+  the init's settings -- blinks Var 170 until an init load starts. Make your screen's seed text for that readout
   "CHOOSE init ->" so it reads the same between blinks.
 
 ### `InitGate.c` — confirm before switching inits
