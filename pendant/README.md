@@ -84,7 +84,7 @@ It is *not* usable as a plain HID device by this bridge.
 
 | File | What it does |
 |---|---|
-| `Program.cs` | Entry point. Waits for KMotionCNC to be running, then for an init program to have loaded, before connecting — so it sits quietly instead of flapping if you're just using the PC. Opens the pendant, builds the link, runs the bridge, exits cleanly on a lost KFLOP link **or a lost pendant** (the input watchdog). Loads `PendantService.c` and `pendant.conf` **from its own directory** (the build deploys both there), so no machine-specific paths are compiled in. |
+| `Program.cs` | Entry point. Waits for KMotionCNC to be running, then for an init program to have loaded, before connecting — so it sits quietly instead of flapping if you're just using the PC. Connects to the KFLOP **with or without a pendant**: without one it keeps the machine services running -- the E-stop watch, `PendantService.c`, the screen Control Lock button and its LOCKED/UNLOCKED readout -- and picks the pendant up when it's plugged in. Exits cleanly on a lost KFLOP link or a lost pendant (the input watchdog); on a lost pendant it leaves the KFLOP programs running and is relaunched to wait for it. Loads `PendantService.c` and `pendant.conf` **from its own directory** (the build deploys both there), so no machine-specific paths are compiled in. |
 | `Pendant.cs` | USB transport and protocol. The 8-byte input report (buttons, mode bits, MPG wheel) and the 19-byte LCD output frame, including the activity counter the firmware needs to treat each frame as new. The byte map was reverse-engineered and hardware-validated. |
 | `Bridge.cs` | The main loop and all the behaviour. Axis selection (the three buttons each toggle a *pair*), mode selection, jogging (step / velocity / continuous), the hold-then-EN command grammar, LCD line composition, the machine-idle gate, and servicing of the custom-screen toggle. |
 | `KflopLink.cs` | Everything that touches the KFLOP: the UserData memory map, command posting, DRO reads, jog and step math per axis, the `MachineIdle` detector, and loading `EStopWatch.c` onto thread 5 and `PendantService.c` onto thread 7. |
@@ -103,7 +103,7 @@ It is *not* usable as a plain HID device by this bridge.
 |---|---|
 | `install-pendant-task.ps1` | Run once. Registers the `PendantBridge` scheduled task: at logon, run the wrapper in a hidden window, no execution time limit, no duplicate instances. The task runs **non-elevated, as you** — only the registration may need an admin shell. It also exports the task definition to `PendantBridge.task.xml`, so the setup is version-controlled rather than living only in Task Scheduler. |
 | `PendantBridge.task.xml` | The exported task definition, written by the install script. Keeps the scheduled-task configuration in the repo. |
-| `run-pendant.ps1` | Supervisor loop. Finds the newest `iMachKflop.exe` under any `C:\KMotion*\...\Release64` (so a KMotion upgrade needs no edit), launches it, and relaunches a few seconds after any exit — e.g. after a KFLOP power-cycle, which the bridge deliberately treats as fail-safe-and-exit. Honours the `AutoStart` flag in `Tune.cs`. |
+| `run-pendant.ps1` | Supervisor loop. Finds the newest `iMachKflop.exe` under any `C:\KMotion*\...\Release64` (so a KMotion upgrade needs no edit), launches it, and relaunches a few seconds after any exit — e.g. after a KFLOP power-cycle, which the bridge deliberately treats as fail-safe-and-exit. Honours the `AutoStart` flag in `Tune.cs`. Runs the bridge **hidden** (no console window); the bridge's own output goes to `%LOCALAPPDATA%\PendantBridgeridge.log` (previous run: `bridge.prev.log`). |
 | `bridge-control.ps1` | Start / stop / restart from a desktop icon, for when auto-start isn't wanted or didn't take. `-Action Console` runs the bridge in a **visible window**, which is the way to see the compile line and diagnostics — the supervised launch is hidden. |
 
 ### Diagnostic / bring-up modes
@@ -125,7 +125,9 @@ screen. A screen button runs a tiny KFLOP program that only raises a request fla
 `UserData 66` — it never writes the command cell, so it can't race `PendantService.c`. The
 bridge polls that flag, applies the *same* machine-idle gate the pendant's F3 uses, and
 toggles. Clicking the screen and pressing F3 therefore drive one identical, idle-protected
-path.
+path. It works **with or without the pendant connected**: the bridge runs these machine
+services either way, so the screen button alone is a Machine Lock -- Feed Hold stops motion
+while a program runs; the lock prevents accidental motion while the machine is idle.
 
 The screen definition itself is machine-specific and isn't shipped here; the only
 integration point you need is **`UserData 66`** (screen → bridge, `1` = toggle requested,

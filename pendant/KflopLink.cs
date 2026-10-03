@@ -727,10 +727,19 @@ namespace iMachKflop
             else { _heartbeatStalls = 0; _lastHeartbeat = hb; }
         }
 
+        // Leave PendantService (T7) and EStopWatch (T5) running on the KFLOP when this
+        // bridge exits -- set when only the PENDANT went away: the machine services
+        // (E-stop watch, screen Machine Status button, LOCKED/UNLOCKED label) must not
+        // depend on the pendant, and the relaunched bridge reconnects to them.
+        public bool KeepProgramsOnDispose { get; set; }
+
         public void Dispose()
         {
-            try { if (Connected) _km.KillProgramThreads(ServiceThread); } catch { }
-            try { if (Connected) _km.KillProgramThreads(WatchThread);   } catch { }
+            if (!KeepProgramsOnDispose)
+            {
+                try { if (Connected) _km.KillProgramThreads(ServiceThread); } catch { }
+                try { if (Connected) _km.KillProgramThreads(WatchThread);   } catch { }
+            }
             try { if (_km != null) _km.Dispose(); } catch { }
         }
     }

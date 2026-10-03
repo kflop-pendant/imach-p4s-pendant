@@ -23,6 +23,7 @@
   rather than silent, and never dies on an unexpected error.
 
   Log: %LOCALAPPDATA%\PendantBridge\run-pendant.log (rotated at ~1 MB).
+  The bridge runs hidden; its own output is in bridge.log (previous run: bridge.prev.log).
 
   To stop it (e.g. during development):  bridge-control.ps1 -Action Stop
   (or the Bridge Stop icon). It asks the bridge to exit cleanly and waits for it.
@@ -85,7 +86,17 @@ while ($true) {
             Write-Log 'No iMachKflop.exe found under C:\KMotion*\KMotion\Release64 -- is KMotion installed / the bridge deployed?'
         }
         else {
-            $proc = Start-Process -FilePath $exe.FullName -WorkingDirectory $exe.DirectoryName -PassThru
+            # Hidden: no console window popping up (most of the time nobody needs it,
+            # and users without a pendant shouldn't see it at all). Its output -- the
+            # pendant.conf summary, connect / init / pendant events -- goes to
+            # bridge.log instead (previous run kept as bridge.prev.log). To watch it
+            # live, use bridge-control.ps1 -Action Console.
+            $bridgeLog = Join-Path $LogDir 'bridge.log'
+            try {
+                if (Test-Path $bridgeLog) { Move-Item $bridgeLog (Join-Path $LogDir 'bridge.prev.log') -Force }
+            } catch { }
+            $proc = Start-Process -FilePath $exe.FullName -WorkingDirectory $exe.DirectoryName -PassThru `
+                        -WindowStyle Hidden -RedirectStandardOutput $bridgeLog -RedirectStandardError (Join-Path $LogDir 'bridge.err.log')
             if (-not $proc) { throw 'Start-Process returned no process object' }
 
             Write-Log "Started $($exe.FullName) (pid $($proc.Id))."

@@ -96,10 +96,19 @@ namespace iMachKflop
 
             using (var pendant = new Pendant())
             {
-                if (!OpenPendantPatient(pendant)) return;      // false only on Ctrl+C
-
-                if (ledMap) { RunLedMap(pendant); return; }
-                if (btnMap) { RunBtnMap(pendant); return; }
+                // The diagnostic modes need the pendant; normal runs do NOT (2026-10-03):
+                // the machine services -- E-stop watch (T5), PendantService (T7), the
+                // screen Machine Status button and its LOCKED/UNLOCKED label -- run with
+                // or without a pendant. A missing pendant is picked up when plugged in.
+                if (ledMap || btnMap)
+                {
+                    if (!OpenPendantPatient(pendant)) return;  // false only on Ctrl+C
+                    if (ledMap) RunLedMap(pendant); else RunBtnMap(pendant);
+                    return;
+                }
+                bool havePendant = TryOpenPendant(pendant);
+                Console.WriteLine(havePendant ? "Pendant found."
+                                              : "No pendant connected -- running the machine services without it; it will be picked up when plugged in.");
 
                 // Load the external speed/feel config (pendant.conf) BEFORE any KFLOP
                 // work. SAFETY: a missing/malformed/out-of-range config makes us refuse
@@ -142,12 +151,21 @@ namespace iMachKflop
                         return;
                     }
 
-                    var bridge = new Bridge(pendant, kflop);
-                    _activeBridge = bridge;
-                    Console.WriteLine("Running. Watch the pendant LCD for the DRO. Press Ctrl+C to stop.");
+                    BridgeExit reason = BridgeExit.Stopped;
+                    bool runBridge = havePendant;
+                    if (!havePendant)
+                    {
+                        reason = RunWithoutPendant(pendant, kflop, out runBridge);
+                    }
+                    if (runBridge)
+                    {
+                        var bridge = new Bridge(pendant, kflop);
+                        _activeBridge = bridge;
+                        Console.WriteLine("Running. Watch the pendant LCD for the DRO. Press Ctrl+C to stop.");
 
-                    BridgeExit reason = bridge.Run();
-                    _activeBridge = null;
+                        reason = bridge.Run();
+                        _activeBridge = null;
+                    }
 
                     if (reason == BridgeExit.LinkLost)
                     {
@@ -164,9 +182,13 @@ namespace iMachKflop
                     else if (reason == BridgeExit.PendantLost)
                     {
                         // Pendant input (USB) stopped: the watchdog already stopped any
-                        // jog. Exit clean so Task Scheduler relaunches and re-opens the
-                        // pendant. No LCD write -- the pendant is gone.
-                        Console.WriteLine("Pendant input lost (USB) -- jog stopped, exiting to relaunch and re-open the pendant.");
+                        // jog. Exit so the supervisor relaunches us (a fresh process is
+                        // the reliable way to re-open the USB device) -- but LEAVE the
+                        // KFLOP programs running: the E-stop watch and the screen
+                        // Machine Status button must not depend on the pendant. The
+                        // relaunched bridge carries on without the pendant until it's back.
+                        kflop.KeepProgramsOnDispose = true;
+                        Console.WriteLine("Pendant input lost (USB) -- jog stopped; machine services keep running; relaunching to wait for the pendant.");
                     }
                     else
                     {
@@ -174,6 +196,66 @@ namespace iMachKflop
                     }
                 }
             }
+        }
+
+        // One quiet attempt to open the pendant (false if it isn't plugged in / no driver).
+        static bool TryOpenPendant(Pendant pendant)
+        {
+            try { return pendant.Open(); } catch { return false; }
+        }
+
+        // Connected to the KFLOP but no pendant: keep the machine services working --
+        // PendantService (T7) and EStopWatch (T5) are already running on the KFLOP; here
+        // the screen "Machine Status" button is relayed (same idle gate as F3), link health
+        // and KMotionCNC restarts are watched, and the pendant is looked for once a second.
+        // runBridge = true when the pendant appeared (the caller then runs the Bridge).
+        static BridgeExit RunWithoutPendant(Pendant pendant, KflopLink kflop, out bool runBridge)
+        {
+            runBridge = false;
+            string session = CncSessionKey();
+            var clock = Stopwatch.StartNew();
+            long nextPendantTry = 1000, nextCncCheck = 1000;
+            int throws = 0;
+            Console.WriteLine("Running without a pendant: screen Machine Status button, E-stop watch and LOCKED/UNLOCKED label active.");
+
+            while (!_stop)
+            {
+                try
+                {
+                    kflop.Service();                  // idle detection + PendantService heartbeat
+                    throws = 0;
+                    if (kflop.ScreenTogglePending())
+                    {
+                        kflop.ClearScreenToggle();
+                        if (kflop.MachineIdle) kflop.RequestMachineToggle();
+                    }
+                }
+                catch { throws++; }
+                if (throws >= 6 || !kflop.ServiceAlive)
+                {
+                    kflop.MarkLinkLost();
+                    return BridgeExit.LinkLost;
+                }
+
+                long now = clock.ElapsedMilliseconds;
+                if (now >= nextCncCheck)
+                {
+                    nextCncCheck = now + 1000;
+                    if (CncSessionKey() != session) return BridgeExit.CncRestarted;
+                }
+                if (now >= nextPendantTry)
+                {
+                    nextPendantTry = now + 1000;
+                    if (TryOpenPendant(pendant))
+                    {
+                        Console.WriteLine("Pendant connected.");
+                        runBridge = true;
+                        return BridgeExit.Stopped;
+                    }
+                }
+                Thread.Sleep(50);
+            }
+            return BridgeExit.Stopped;
         }
 
         // Retry pendant.Open() until it succeeds or Ctrl+C. Returns false only on _stop.
