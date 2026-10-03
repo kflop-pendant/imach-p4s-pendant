@@ -72,7 +72,8 @@ the machine. The pendant talks to the KFLOP directly, so it **keeps jogging the 
 machine**, its LCD keeps showing the real coordinates, and its E-stop keeps working (that
 last part is deliberate -- the pendant is never disabled). Simulate also stays ticked
 across KMotionCNC restarts. If the screen DROs are white and frozen while the pendant
-still moves the machine, untick Simulate.
+still moves the machine, untick Simulate. To make this obvious, the pendant's LCD
+alternates its second line with **CNC SIM** while Simulate is ticked.
 
 **The primary safety device on any machine is a hardwired physical E-stop wired directly
 into the drive/VFD enable chain, independent of any computer, USB, or program.** This

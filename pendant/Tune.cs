@@ -373,6 +373,11 @@ namespace iMachKflop
         public const string StatusZeroed  = "ZEROED";   // zero succeeded
         public const string StatusZeroErr = "ZERO ER";  // zero failed
         public const string StatusGotoz   = "GOTOZ";     // go-to-zero move issued (post-move flash)
+        public const string StatusAxisOff = " OFF";     // after the axis letter: selected axis disabled by KFLOP
+                                                        // (e.g. MaxFollowingError) -- F3 lock/unlock or reload the init
+        public const string StatusCncSim  = "CNC SIM";  // KMotionCNC's Simulate box is ticked (alternates on line 2)
+        public const int    CncSimCheckMs = 500;        // how often the bridge reads that checkbox
+        public const int    CncSimBlinkMs = 1000;       // "CNC SIM" / normal line 2 alternation
 
         // Init-load banner (full screen for ~2s when a new init is loaded mid-session).
         // Line 1 = the init name (by identity var 56: 1 Standard / 2 Knee Z / 3 HSS),

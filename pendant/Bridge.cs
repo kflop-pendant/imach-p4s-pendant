@@ -132,6 +132,10 @@ namespace iMachKflop
         long      _cfgMsgUntilMs;                // init-load banner window (name + "Loaded")
         int       _cfgInitId;                    // which init identity that banner names (1 Std / 2 Knee Z / 3 HSS)
         bool      _tpBad;                        // RELOAD INIT: KMotionCNC's Z/C scale doesn't match the init
+        bool      _cncSim;                       // KMotionCNC's Simulate box is ticked (CncWindow) -> "CNC SIM" on line 2
+        long      _cncSimCheckMs;
+        bool      _selAxisOff;                   // selected axis disabled while the machine is unlocked
+                                                 // (e.g. tripped MaxFollowingError) -> "Z OFF" on line 2
         int       _loadingInitId;                // init currently LOADING (var 58 negative), 0 = none
         long      _loadingSinceMs;               // when that load was first seen (for InitLoadingMaxMs)
 
@@ -804,6 +808,15 @@ namespace iMachKflop
             }
 
             _tpBad = _kflop.ReadTpBad();          // RELOAD INIT warning (PendantService CheckInitScale)
+            // An axis KFLOP disabled on its own -- e.g. the knee tripping MaxFollowingError
+            // on a long upward jog -- just stops; nothing else says why (2026-10-03).
+            try { _selAxisOff = _kflop.MachineEnabled && !_kflop.AxisEnabledSel(_sel); }
+            catch { _selAxisOff = false; }
+            if (NowMs - _cncSimCheckMs >= Tune.CncSimCheckMs)
+            {
+                _cncSimCheckMs = NowMs;
+                _cncSim = CncWindow.SimulateChecked();   // read-only look at KMotionCNC's Simulate box
+            }
 
             _kflop.SnapshotWorkDros(_dro);
             _spindleOn = _kflop.SpindleOn();     // cache live spindle enable for the LCD + toggle
@@ -941,8 +954,16 @@ namespace iMachKflop
 
             char label = _kflop.SelLabel(_sel);
             double val = _dro[_kflop.DroSlot(_sel)];
-            string s  = val.ToString(DroFormat(_kflop.SelRotary(_sel)));
-            string l1 = label + s;
+            string fmt = DroFormat(_kflop.SelRotary(_sel));
+            string l1 = label + val.ToString(fmt);
+            // The line is 8 characters: at -10 and beyond (or +100) the configured
+            // decimals don't fit ("Z-16.0000" is 9). Drop decimals one at a time
+            // ("Z-16.000") before giving up on "OVR".
+            while (l1.Length > 8 && fmt.Length > 1)
+            {
+                fmt = fmt.Length > 3 ? fmt.Substring(0, fmt.Length - 1) : "0";
+                l1 = label + val.ToString(fmt);
+            }
             if (l1.Length > 8)
                 l1 = label + (val >= 0 ? " +OVR" : " -OVR");
 
@@ -953,6 +974,7 @@ namespace iMachKflop
             else if (_armed != Arm.None)                   l2 = ArmPrompt();
             else if (!_kflop.MachineEnabled)               { l2 = Tune.MachLockOn;  showingMachine = true; }
             else if (NowMs < _machineOnMsgUntilMs)         { l2 = Tune.MachLockOff; showingMachine = true; }
+            else if (_selAxisOff)                          l2 = label + Tune.StatusAxisOff;
             else if (NowMs < _zeroMsgUntilMs)              l2 = _lastZero == ZeroState.Ok ? Tune.StatusZeroed : Tune.StatusZeroErr;
             else if (NowMs < _gotozMsgUntilMs)             l2 = Tune.StatusGotoz;
             else if (_modeCode == ModeCodeSovr)            { l2 = SsoText(); showingSso = true; }
@@ -966,6 +988,13 @@ namespace iMachKflop
                 string g = (fx >= 1 && fx <= 9) ? "G" + (53 + fx) : "G--";
                 l2 = ModeText() + g;
             }
+
+            // KMotionCNC in Simulate: its screen DROs freeze and programs don't move the
+            // machine, but the pendant still does -- say so on line 2, alternating with
+            // the normal text (line 1 keeps the DRO). Prompts, lock and zero messages win.
+            if (_cncSim && _kflop.Connected && _kflop.ServiceAlive && _armed == Arm.None && !showingMachine && !showingSso && !_selAxisOff &&
+                NowMs >= _zeroMsgUntilMs && NowMs >= _gotozMsgUntilMs && (NowMs / Tune.CncSimBlinkMs) % 2 == 0)
+                l2 = Tune.StatusCncSim;
 
             // Spindle prompt takes over line 1 too, to match the manual's
             // two-line "SPINDLE" / "START?|STOP?" display (4.3). S% mode shows

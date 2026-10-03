@@ -54,6 +54,10 @@ namespace iMachKflop
         static volatile bool   _stop    = false;
         static volatile Bridge _activeBridge;
 
+        // Named event bridge-control.ps1 sets to ask for a clean exit (never force-kill
+        // a bridge that may be mid-call to the KMotion server).
+        public const string StopEventName = @"Local\iMachKflop.Stop";
+
         static void Main(string[] args)
         {
             bool ledMap = args != null && args.Length > 0 &&
@@ -69,6 +73,26 @@ namespace iMachKflop
                 var b = _activeBridge;
                 if (b != null) b.Stop();
             };
+
+            // Clean stop on request (bridge-control.ps1 Stop / Restart signal this event):
+            // same as Ctrl+C -- the loops finish their current KFLOP call and the bridge
+            // exits normally. Being force-killed in the middle of a KMotionServer exchange
+            // twice left the server waiting forever on a dead client, and nothing could
+            // reach the KFLOP until a full power cycle (2026-10-01, 2026-10-03).
+            try
+            {
+                var stopEvt = new EventWaitHandle(false, EventResetMode.ManualReset, StopEventName);
+                stopEvt.Reset();   // a stale signal from an earlier stop must not end this run
+                new Thread(() =>
+                {
+                    stopEvt.WaitOne();
+                    Console.WriteLine("Stop requested -- finishing the current KFLOP call and exiting.");
+                    _stop = true;
+                    var b = _activeBridge;
+                    if (b != null) b.Stop();
+                }) { IsBackground = true, Name = "StopRequest" }.Start();
+            }
+            catch (Exception ex) { Console.WriteLine("Stop-request event unavailable: " + ex.Message); }
 
             using (var pendant = new Pendant())
             {

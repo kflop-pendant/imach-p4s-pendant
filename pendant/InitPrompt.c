@@ -39,6 +39,9 @@
 #include "KMotionDef.h"
 
 #define UD_INIT_ID  58     /* double-index: 0 none, -id loading, +id loaded */
+#define UD_PROMPT_BEAT 74  /* double-index: Time_sec() while blinking, 0 when not --
+                             InitGate skips its "an init is loaded" confirmation for
+                             the init the prompt asks for (persist 148/149) */
 #define LABEL_VAR   170    /* screen readout (DROLabel persist var) */
 #define GATH_OFFSET 1100   /* gather-buffer word offset shared by all Var 170 writes */
 #define ON_SEC      1.4    /* "CHOOSE init ->" visible  } one blink every 2 s */
@@ -46,6 +49,7 @@
 
 /* KFLOP stores a 64-bit double in a PAIR of UserData ints (index 2n, 2n+1) */
 double GetUD(int i) { return *(double *)&persist.UserData[i * 2]; }
+void SetUD(int i, double v) { *(double *)&persist.UserData[i * 2] = v; }
 
 int startState;   /* var 58 when launched */
 
@@ -71,15 +75,14 @@ int WaitWhileNoInit(double sec)
 	while (Time_sec() - t0 < sec)
 	{
 		if (!NoInit()) return 0;
+		SetUD(UD_PROMPT_BEAT, Time_sec());	/* "the prompt is up" -- fresh every slice */
 		WaitNextTimeSlice();
 	}
 	return 1;
 }
 
-int main()
+int Prompt(void)
 {
-	startState = (int)GetUD(UD_INIT_ID);
-	if (startState < 0) return 0;		/* an init is loading right now: it owns the label */
 	for (;;)
 	{
 		if (!NoInit()) return 0;
@@ -90,4 +93,14 @@ int main()
 		Label(" ");				/* a space, not "", so it always reads as a real label */
 		if (!WaitWhileNoInit(OFF_SEC)) return 0;
 	}
+}
+
+int main()
+{
+	startState = (int)GetUD(UD_INIT_ID);
+	if (startState < 0) return 0;		/* an init is loading right now: it owns the label */
+	SetUD(UD_PROMPT_BEAT, Time_sec());
+	Prompt();
+	SetUD(UD_PROMPT_BEAT, 0.0);		/* the prompt is down: the gate confirms as usual */
+	return 0;
 }

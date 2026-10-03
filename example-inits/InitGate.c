@@ -19,7 +19,9 @@
  * +1/+2/+3 = that init loaded, -1/-2/-3 = that init loading, 0 = none):
  *   job running (JOB_ACTIVE)  -> refuse, no prompt (would kill the init mid-job)
  *   0  no init since power-up -> load immediately, no prompt
- *   >0 an init is loaded      -> Yes/No, default No
+ *   >0 an init is loaded      -> Yes/No, default No -- except while the screen's
+ *      "CHOOSE init ->" prompt is up (new KMotionCNC session: the new KMotionCNC
+ *      lost the init's settings, so an init must be loaded): load immediately
  *   <0 an init is mid-load    -> sharper Yes/No, default No (lets a stuck load be replaced)
  *
  * PC_COMM: the MsgBox holds the single PC_COMM mailbox until it is answered,
@@ -43,6 +45,7 @@
 #define UD_INIT_ID     58   /* double-index: init state (see above) */
 #define TP_HOLD_REQ    56   /* double-index: ask PendantService to pause PC_COMM */
 #define TP_HOLD_ACK    57   /* double-index: PendantService paused */
+#define UD_PROMPT_BEAT 74   /* double-index: InitPrompt.c writes Time_sec() while blinking */
 #define INIT_MCODE_BASE 109 /* PC_COMM_MCODE takes the M number: 109 + init id -> M110 Std / M111 Knee Z / M112 HSS */
 
 #ifndef MB_DEFBUTTON2
@@ -59,8 +62,8 @@ char *InitName(int id)
 
 int main()
 {
-	int sel, state, answer, rc;
-	double t0;
+	int sel, state, answer, rc, promptUp;
+	double t0, beat;
 	char msg[200];	/* KMotionCNC reads at most 50 words (200 bytes) of MsgBox text */
 
 	sel = persist.UserData[GATE_VAR] - 10;	/* 11/12/13 -> 1/2/3 */
@@ -93,7 +96,14 @@ int main()
 	while (persist.UserData[PC_COMM_PERSIST] > 0 && Time_sec() - t0 < 3.0)
 		WaitNextTimeSlice();
 
-	if (state != 0)
+	/* The "CHOOSE init ->" prompt is blinking (new KMotionCNC session): it is asking
+	   for exactly this, so no "an init is already loaded" confirmation. A heartbeat,
+	   not a flag, so a prompt that was killed (e.g. by a job on its thread) can never
+	   leave the confirmation switched off. */
+	beat = GetUserDataDouble(UD_PROMPT_BEAT);
+	promptUp = beat > 0.0 && Time_sec() >= beat && Time_sec() - beat < 1.0;	/* >= : the clock restarts at power-up */
+
+	if (state != 0 && !promptUp)
 	{
 		if (state > 0)
 		{

@@ -160,6 +160,7 @@ Simulate mode: with KMotionCNC's Simulate box ticked, the screen DROs turn white
 and stop following the machine and G-code/MDI don't move it, but the pendant still
 jogs the real machine, shows real coordinates and keeps its E-stop. It stays ticked
 across restarts -- if the DROs look frozen while the pendant works, untick Simulate.
+The pendant LCD alternates line 2 with "CNC SIM" while Simulate is ticked.
 
 Adapting to a different pendant: `iMachKflop.exe --btnmap` prints the raw report
 and decoded bits so you can remap the buttons; `--ledmap` sweeps the LCD indicator

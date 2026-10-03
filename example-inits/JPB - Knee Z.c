@@ -270,7 +270,8 @@ FPGA(STEP_PULSE_LENGTH_ADD)=32 + 0x40 + 0x80;
 	ch2->BacklashRate=0;
 	ch2->invDistPerCycle=1;
 	ch2->Lead=0;
-	ch2->MaxFollowingError=5000;
+	ch2->MaxFollowingError=10000;	// knee: 10000 counts = 0.023" at 427000 cpi. 5000 (0.0117") tripped on every long
+								// upward knee jog -- lifting the heavy knee lags more (Jim, 2026-10-03).
 	ch2->StepperAmplitude=24;
 
 	ch2->iir[0].B0=1;

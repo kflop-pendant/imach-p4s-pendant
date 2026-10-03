@@ -10,13 +10,40 @@ param([ValidateSet('Restart','Stop','Console')][string]$Action = 'Restart')
 
 $wrapper = Join-Path $PSScriptRoot 'run-pendant.ps1'
 
+function Request-BridgeExit {
+    # Ask a running bridge to exit cleanly (it finishes its current KFLOP call first)
+    # and wait up to 10 s. Returns $true when no bridge is left running.
+    if (-not (Get-Process iMachKflop -ErrorAction SilentlyContinue)) { return $true }
+    try {
+        $evt = [System.Threading.EventWaitHandle]::OpenExisting('Local\iMachKflop.Stop')
+        [void]$evt.Set(); $evt.Dispose()
+    } catch { Write-Host "Bridge has no stop signal (older build)." }
+    $deadline = (Get-Date).AddSeconds(10)
+    while ((Get-Process iMachKflop -ErrorAction SilentlyContinue) -and (Get-Date) -lt $deadline) {
+        Start-Sleep -Milliseconds 200
+    }
+    return -not (Get-Process iMachKflop -ErrorAction SilentlyContinue)
+}
+
 function Stop-Bridge {
-    Stop-ScheduledTask -TaskName PendantBridge -ErrorAction SilentlyContinue
-    # kill any supervisor loop, however it was launched (task or icon)
+    # NEVER force-kill a bridge that may be mid-call to the KMotion server: twice
+    # (2026-10-01, 2026-10-03) that left the server waiting forever on a dead client,
+    # and nothing could reach the KFLOP until a full power cycle. Stopping the
+    # scheduled task can also terminate the bridge (it runs inside the task), so:
+    #   1. ask the bridge to exit cleanly while its supervisor is still running;
+    #   2. stop the supervisor + task during the supervisor's 5 s relaunch delay;
+    #   3. if a relaunch slipped through, ask that one to exit too;
+    #   4. force only as a last resort, with a warning.
+    $clean = Request-BridgeExit
     Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" |
         Where-Object { $_.CommandLine -match 'run-pendant' } |
         ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
-    Stop-Process -Name iMachKflop -Force -ErrorAction SilentlyContinue
+    Stop-ScheduledTask -TaskName PendantBridge -ErrorAction SilentlyContinue
+    if ($clean) { $clean = Request-BridgeExit }
+    if (-not $clean -and (Get-Process iMachKflop -ErrorAction SilentlyContinue)) {
+        Write-Host "Bridge did not exit within 10 s -- forcing it. If KMotionCNC / the pendant then can't reach the KFLOP, power-cycle the PC and KFLOP."
+        Stop-Process -Name iMachKflop -Force -ErrorAction SilentlyContinue
+    }
     Start-Sleep -Seconds 1
 }
 

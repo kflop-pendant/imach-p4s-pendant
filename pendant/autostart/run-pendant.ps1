@@ -24,10 +24,11 @@
 
   Log: %LOCALAPPDATA%\PendantBridge\run-pendant.log (rotated at ~1 MB).
 
-  To stop it (e.g. during development):
-     Stop-ScheduledTask -TaskName PendantBridge
-     Stop-Process -Name iMachKflop -Force -ErrorAction SilentlyContinue
-  or:  bridge-control.ps1 -Action Stop
+  To stop it (e.g. during development):  bridge-control.ps1 -Action Stop
+  (or the Bridge Stop icon). It asks the bridge to exit cleanly and waits for it.
+  Do NOT Stop-Process -Force the bridge, or Stop-ScheduledTask while it runs:
+  killing it in the middle of a KMotionServer call can leave the server waiting
+  forever, so nothing reaches the KFLOP until a PC + KFLOP power cycle.
 #>
 
 param([switch]$Force)   # -Force: ignore Tune.AutoStart (used by the desktop icon)

@@ -42,7 +42,8 @@ the machine. The pendant talks to the KFLOP directly, so it **keeps jogging the 
 machine**, its LCD keeps showing the real coordinates, and its E-stop keeps working (that
 last part is deliberate -- the pendant is never disabled). Simulate also stays ticked
 across KMotionCNC restarts. If the screen DROs are white and frozen while the pendant
-still moves the machine, untick Simulate.
+still moves the machine, untick Simulate. To make this obvious, the pendant's LCD
+alternates its second line with **CNC SIM** while Simulate is ticked.
 
 **General principle.** The primary safety device on any machine is a hardwired
 physical E-stop button wired directly into the drive/VFD enable chain, independent
@@ -87,6 +88,7 @@ It is *not* usable as a plain HID device by this bridge.
 | `Pendant.cs` | USB transport and protocol. The 8-byte input report (buttons, mode bits, MPG wheel) and the 19-byte LCD output frame, including the activity counter the firmware needs to treat each frame as new. The byte map was reverse-engineered and hardware-validated. |
 | `Bridge.cs` | The main loop and all the behaviour. Axis selection (the three buttons each toggle a *pair*), mode selection, jogging (step / velocity / continuous), the hold-then-EN command grammar, LCD line composition, the machine-idle gate, and servicing of the custom-screen toggle. |
 | `KflopLink.cs` | Everything that touches the KFLOP: the UserData memory map, command posting, DRO reads, jog and step math per axis, the `MachineIdle` detector, and loading `EStopWatch.c` onto thread 5 and `PendantService.c` onto thread 7. |
+| `CncWindow.cs` | Read-only look at KMotionCNC's window: reads its **Simulate** checkbox (`IDC_Simulate`, `BM_GETCHECK`) so the LCD can flag "CNC SIM" -- in Simulate KMotionCNC's screen freezes and programs don't move the machine, but the pendant still does. Never clicks or changes anything. |
 | `pendant.conf` | **The file you tune.** A plain `key = value` text file of the speed/feel values — IPM caps, jog/step accels, step sizes, velocity/continuous tuning, half-speed, GOTOZ feeds, spindle-override range, DRO decimals. **Edit it and restart the bridge — no rebuild.** It is loaded from the exe's directory and validated at startup; a missing/malformed/out-of-range/unknown key makes the bridge refuse to start (`CONFIG/ERR` on the LCD, the offending key named on the console) rather than guess a speed. |
 | `Tune.cs` | The compiled config: the *structural* and *measured* settings that don't change at runtime — per-axis table (counts/unit, channel, enable flag, rotary flag), the counts-per-inch machine facts, per-mode and per-button enable tables, gate/watchdog timings, every LCD string, and the auto-start flag. Speed/feel numbers moved out to `pendant.conf`; Tune holds the shipped defaults and everything not meant to be hand-tuned. |
 | `TuneConfig.cs` | Loads and strictly validates `pendant.conf` into `Tune` at startup — fail-loud, no silent fallback to defaults, every applied value echoed to the console. |
@@ -174,6 +176,12 @@ carry two small additions the pendant relies on:
 - **F1 = zero the work offset** on the selected axis.
 - **F2 = go to zero** — retracts Z clear, then moves X and Y home.
 - **F3 = control lock** — enables/disables all axes, mirrored on the screen.
+- **"Z OFF" when an axis drops out** — if KFLOP disables the selected axis on its own (for
+  example the knee tripping `MaxFollowingError` on a long upward jog) while the machine is
+  unlocked, line 2 shows `<axis> OFF` instead of the axis silently stopping. F3 lock/unlock or
+  reloading the init re-enables it.
+- **Long readouts fit** — the 8-character line drops decimals as needed (`Z-16.000`,
+  `X-123.46`) before falling back to `OVR`.
 - Function buttons use a **hold-then-tap-EN** grammar: hold the button, the LCD shows
   what it will do, tap EN to commit. Nothing fires on a single press.
 - **Live init tracking** — load a different machine init (Standard / Knee Z / HSS) and the
@@ -232,4 +240,5 @@ wheel already jogs every axis in both directions.
   the screen DROs turn white and stop following the machine, and programs/MDI don't move
   it -- but the pendant still jogs the real machine and shows real coordinates on its LCD
   (and its E-stop still works). It stays ticked across restarts. White, frozen DROs while
-  the pendant works = untick Simulate. See [Safety](#-safety).
+  the pendant works = untick Simulate. The LCD flags it: line 2 alternates with **CNC SIM**
+  (the bridge reads KMotionCNC's Simulate checkbox; see `CncWindow.cs`). See [Safety](#-safety).

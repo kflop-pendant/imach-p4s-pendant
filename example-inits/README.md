@@ -79,8 +79,12 @@ is already loaded**:
 |---|---|
 | a G-code job is running (`JOB_ACTIVE`) | refuses, no prompt |
 | `0` — no init since KFLOP power-up | loads immediately, no prompt |
-| `> 0` — an init is loaded | Yes/No box (default **No**) naming the loaded init |
+| `> 0` — an init is loaded | Yes/No box (default **No**) naming the loaded init — except while the "CHOOSE init ->" prompt is blinking (a new KMotionCNC session, which has lost the init's settings): loads immediately |
 | `< 0` — an init is mid-load or was interrupted | sharper Yes/No (default No) |
+
+The prompt exception uses a heartbeat: `InitPrompt.c` writes `Time_sec()` to UserData double 74
+(persist 148/149) every time slice while it blinks, and the gate skips the box only if that is
+under a second old -- so a prompt that was stopped can never leave the confirmation switched off.
 
 KMotionCNC setup (**Tool Setup → M-codes**, with KMotionCNC's own config otherwise unchanged):
 
