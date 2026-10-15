@@ -50,6 +50,7 @@ namespace iMachKflop
         const int UD_CMD_STAT  = 49;
         const int UD_CONFIG    = 54;   // init publishes 1 (Standard) or 2 (HSS/Knee-Z) -- knee/quill resolver
         const int UD_SPINDLE   = 55;   // PendantService publishes live spindle enable (ReadBit 156)
+        const int UD_PROMPT_BEAT = 74; // InitPrompt.c writes the KFLOP's Time_sec() every slice while blinking, 0 when not
         const int UD_INIT_ID   = 58;   // init publishes its identity for the LCD banner (1 Std / 2 Knee Z / 3 HSS).
                                        // NOT 56/57 -- those are the init<->service TP_HOLD_REQ/ACK handshake.
         const int UD_GOTOZ_CLEAR = 62; // GOTOZ params (bridge -> service, written once at connect)
@@ -233,6 +234,25 @@ namespace iMachKflop
                 return (id >= -3 && id <= 3) ? id : 0;
             }
             catch { return 0; }
+        }
+
+        // Is the screen's "CHOOSE init ->" prompt (InitPrompt.c) up? It rewrites its
+        // heartbeat every time slice while it blinks and writes 0 on exit, so "up" =
+        // nonzero AND still changing. Two reads PromptBeatGapMs apart; any read error
+        // counts as "not up" (the caller then connects as before).
+        const int PromptBeatGapMs = 150;
+        public bool PromptUp()
+        {
+            try
+            {
+                EnsureController();
+                double b0 = _km.GetUserDataDouble(UD_PROMPT_BEAT);
+                if (b0 <= 0.0) return false;
+                Thread.Sleep(PromptBeatGapMs);
+                double b1 = _km.GetUserDataDouble(UD_PROMPT_BEAT);
+                return b1 > 0.0 && b1 != b0;
+            }
+            catch { return false; }
         }
 
         // RELOAD INIT flag from PendantService (CheckInitScale): KMotionCNC's Z/C

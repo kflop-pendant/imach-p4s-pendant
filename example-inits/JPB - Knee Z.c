@@ -45,6 +45,34 @@ void UpdateWatchdogLED(void);
 
 int ControlProgramActive = 1;
 
+/* Drive-relay blip filter for the spindle gate (2026-10-14). M101 re-enables
+ * X/Y/Z with EnableAxisDest() at the top of every PCB program; under KMotion
+ * 5.5.1 that shows an axis as disabled for well under a millisecond, which
+ * dropped bit 155 for one loop pass and turned the spindle off mid-job (it
+ * never comes back on its own). A relay-off now counts only once the relay has
+ * STAYED off for RELAY_OFF_DEBOUNCE -- far shorter than any real Machine Lock,
+ * axis fault or limit trip. E-stop and the KMotionCNC watchdog still act at once.
+ * persist 180 counts the blips absorbed (GetPersistDec 180; 0 at init load). */
+#define RELAY_OFF_DEBOUNCE 0.020	// seconds
+#define UD_RELAY_BLIPS     180		// persist int: relay blips absorbed since this init loaded
+double RelayOffSince = -1.0;		// Time_sec() when bit 155 went off, -1 while on
+
+/* Is the drive relay (bit 155) on, ignoring blips shorter than RELAY_OFF_DEBOUNCE?
+ * Call once per loop pass. */
+int RelayOn(void)
+{
+	double t = Time_sec();
+	if (ReadBit(155))
+	{
+		if (RelayOffSince >= 0.0 && t - RelayOffSince < RELAY_OFF_DEBOUNCE)
+			persist.UserData[UD_RELAY_BLIPS]++;		// came back in time: a blip, absorbed
+		RelayOffSince = -1.0;
+		return 1;
+	}
+	if (RelayOffSince < 0.0) RelayOffSince = t;
+	return t - RelayOffSince < RELAY_OFF_DEBOUNCE;
+}
+
 // TP verification flag — set by the TP block in main() based on whether
 // all SetTPParameter calls returned rc=0 AND the delayed re-read matched
 // the expected values. Read by WatchdogOK to decide whether to repaint
@@ -585,6 +613,8 @@ FPGA(STEP_PULSE_LENGTH_ADD)=32 + 0x40 + 0x80;
 	SetUserDataDouble(54, 2.0);	// Knee Z: knee on ch2, quill on ch3
 	SetUserDataDouble(58, 2.0);	// pendant init identity -> LCD banner name: 2 = Knee Z  (var 58; NOT 56 = TP_HOLD_REQ)
 
+	persist.UserData[UD_RELAY_BLIPS] = 0;	// relay-blip counter: fresh per init load
+
 	for (;;)  							 // loop forever
 	{
 		XLimit = ReadBit(136);
@@ -607,8 +637,15 @@ FPGA(STEP_PULSE_LENGTH_ADD)=32 + 0x40 + 0x80;
 
 		if (!EStop)
 		{
-			for (i = 0; i < 6; i++)
-				if (chan[i].Enable) DisableAxis(i);	// disable axes -> KMotionCNC self-aborts ("Axis Disabled")
+			// disable axes -> KMotionCNC self-aborts ("Axis Disabled"). The chN
+			// pointers, NOT chan[i].Enable: with a variable index that reads wrong
+			// for i > 0 on this KFLOP (2026-10-14), so only X was being disabled.
+			if (ch0->Enable) DisableAxis(0);
+			if (ch1->Enable) DisableAxis(1);
+			if (ch2->Enable) DisableAxis(2);
+			if (ch3->Enable) DisableAxis(3);
+			if (ch4->Enable) DisableAxis(4);
+			if (ch5->Enable) DisableAxis(5);
 		}
 
 		// Big OEM spindle: force OFF on the FALLING EDGE of the safety condition,
@@ -624,7 +661,7 @@ FPGA(STEP_PULSE_LENGTH_ADD)=32 + 0x40 + 0x80;
 		// loop -- bit 155 is set later in the loop -- which is imperceptible.)
 		{
 			static int prevSafe = 1;  // assume safe at init entry (init explicitly turned spindle off)
-			int safe = (EStop && ControlProgramActive && ReadBit(155));
+			int safe = (EStop && ControlProgramActive && RelayOn());	// RelayOn: ignores M101's sub-ms blips
 			if (prevSafe && !safe) {
 				ClearBit(150); ClearBit(151); DAC(7, 0);
 			}

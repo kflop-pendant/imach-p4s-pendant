@@ -78,8 +78,15 @@ main()
         {
             /* PRIMARY abort: disable the axes. KMotionCNC's poll sees this and
              * self-aborts the running job ("Axis Disabled") -- clean, no Cancel. */
-            for (i = 0; i < 6; i++)
-                if (chan[i].Enable) DisableAxis(i);
+            /* The chN pointers, NOT chan[i].Enable: with a variable index that
+             * reads wrong for i > 0 on this KFLOP (2026-10-14), so only X was
+             * being disabled -- the rest stopped only because 155 dropped. */
+            if (ch0->Enable) DisableAxis(0);
+            if (ch1->Enable) DisableAxis(1);
+            if (ch2->Enable) DisableAxis(2);
+            if (ch3->Enable) DisableAxis(3);
+            if (ch4->Enable) DisableAxis(4);
+            if (ch5->Enable) DisableAxis(5);
 
             ClearBit(DRIVE_EN_BIT);             /* drop the stepper drive-enable relay */
 

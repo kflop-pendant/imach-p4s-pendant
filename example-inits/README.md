@@ -67,7 +67,15 @@ readout; all of it is optional and harmless without such a screen.
 - **"CHOOSE init ->" blink.** `pendant/InitPrompt.c`, launched by the bridge before any init is
   loaded -- and again whenever KMotionCNC is (re)opened, since a new KMotionCNC session has lost
   the init's settings -- blinks Var 170 until an init load starts. Make your screen's seed text for that readout
-  "CHOOSE init ->" so it reads the same between blinks.
+  "CHOOSE init ->" so it reads the same between blinks. While it blinks the pendant shows
+  **Waiting for init**; the bridge connects once the reloaded init has finished loading.
+- **Spindle only while the drives are live.** Each init turns the spindle off when the
+  drive-enable relay (bit 155) drops -- Machine Lock, an axis fault, a limit trip. A relay-off
+  counts only after it has lasted 20 ms (`RelayOn()`): under KMotion 5.5.1 an
+  `EnableAxisDest()` on an already-enabled axis (e.g. a re-sync M-code at the top of a program)
+  shows that axis disabled for well under a millisecond, which used to switch the spindle off
+  mid-job. E-stop and the KMotionCNC watchdog still act at once. Persist var 180 counts the
+  blips absorbed since the init loaded.
 
 ### `InitGate.c` — confirm before switching inits
 
