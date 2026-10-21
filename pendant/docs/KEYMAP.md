@@ -85,13 +85,17 @@ pair** on each press. The pairings come from the silkscreen.
 | `0x40` | Y ↔ B |
 | `0x80` | C ↔ Z — **selects Z first** (Z is the primary of this pair) |
 
-**Mode select — three buttons, six modes:**
+**Mode select — three buttons, seven modes:**
 
 | Button | Toggles between |
 |---|---|
 | `0x01` | S (step jog) ↔ Vv (velocity jog) |
 | `0x02` | Cs (continuous jog) ↔ C% (continuous rate) |
-| `0x04` | F% (feed override) ↔ S% (spindle override) |
+| `0x04` | F% (feed override) → S% (spindle override) → **PRG STEP** → F% (cycles three) |
+
+PRG STEP is this bridge's addition, not the manual's: the wheel scrolls the running program
+along its path (see `INSTALL_GUIDE.md`, "PRG STEP"). The pendant's own mode indicator has no
+code for it and shows F%; the LCD says `PRG STEP`.
 
 ---
 

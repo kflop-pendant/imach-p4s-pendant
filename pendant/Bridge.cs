@@ -57,6 +57,8 @@ namespace iMachKflop
         const int    InitLoadingBlinkMs = 400;  // blink period of the trailing "." on the "Loading" line
         const double IpmSendEps       = 0.10;
         const double FroStepFactor    = 1.03;
+        const int    FroCheckMs       = 250;    // F% / S% mode: how often to read KMotionCNC's override box
+        const int    SsoSyncQuietMs   = 700;    // S%: re-read the screen only after the wheel is still this long
         const int    UpkeepIntervalMs = 50;
         const int    UpkeepThrowLimit = 6;    // ~300ms of failing board ops -> link lost
         const bool   EnableCycleStart = true;
@@ -64,7 +66,9 @@ namespace iMachKflop
         const int    AxisIndicatorShift = 4;
 
         const int ModeCodeStep  = 0, ModeCodeCont = 1, ModeCodeF = 2,
-                  ModeCodeVel   = 3, ModeCodeCRate = 4, ModeCodeSovr = 5;
+                  ModeCodeVel   = 3, ModeCodeCRate = 4, ModeCodeSovr = 5,
+                  ModeCodePrg   = 6;   // PRG STEP -- bridge-only code; the LCD indicator shows F's
+        const int PsExitHoldMaxMs = 1500;  // leaving PRG STEP mid-program: wait this long for the hold
 
         // Indices into Tune.Buttons[] -- the action-button enable table. EN and
         // E-Stop are absent on purpose: they are never gateable.
@@ -99,8 +103,16 @@ namespace iMachKflop
         double _lastIpmSent;
         long   _lastMpgActivityMs;
         double _csRate = 1.0;
-        double _ssoFrac = Tune.SsoDefault;   // S% spindle-speed override (1.0 = 100%), pendant-owned
+        double _ssoFrac = Tune.SsoDefault;   // S% spindle-speed override (1.0 = 100%); follows KMotionCNC's box when the wheel is still
         int    _pendingSteps;
+
+        // PRG STEP (shared/ProgramStep.c runs the servo on the init thread)
+        int    _psStepIdx = 1;          // index into Tune.PsTimeSteps
+        double _psPendingSec;           // wheel program-seconds not yet posted
+        double _psWheel;                // running total posted to the KFLOP
+        bool   _psWheelKnown;           // _psWheel synced to the KFLOP's value (bridge restart)
+        bool   _psExitHoldSent;         // leaving the mode mid-program: Hold() sent, waiting for it
+        long   _psExitSinceMs;
         int    _stepIdx;
 
         bool   _csStarted;              // Cs delay-start latch
@@ -134,6 +146,9 @@ namespace iMachKflop
         bool      _tpBad;                        // RELOAD INIT: KMotionCNC's Z/C scale doesn't match the init
         bool      _cncSim;                       // KMotionCNC's Simulate box is ticked (CncWindow) -> "CNC SIM" on line 2
         long      _cncSimCheckMs;
+        double?   _froScreen;                    // KMotionCNC's feed override as on its screen (CncWindow), F% mode only
+        long      _froCheckMs;                   // last screen read of the F% / S% override box
+        long      _ssoWheelMs;                   // last S% wheel click (screen re-sync waits for quiet)
         bool      _selAxisOff;                   // selected axis disabled while the machine is unlocked
                                                  // (e.g. tripped MaxFollowingError) -> "Z OFF" on line 2
         int       _loadingInitId;                // init currently LOADING (var 58 negative), 0 = none
@@ -164,7 +179,7 @@ namespace iMachKflop
         static int FirstEnabledMode()
         {
             int[] order = { ModeCodeStep, ModeCodeVel, ModeCodeCont,
-                            ModeCodeCRate, ModeCodeF, ModeCodeSovr };
+                            ModeCodeCRate, ModeCodeF, ModeCodeSovr, ModeCodePrg };
             foreach (int m in order)
                 if (Tune.Modes[m].Enabled) return m;
             return ModeCodeStep;   // unreachable: AnyJogModeEnabled() gates Run()
@@ -339,11 +354,24 @@ namespace iMachKflop
             else if (Rising(inp.ModeCont, _prev.ModeCont))
                 _modeCode = TogglePair(_modeCode, ModeCodeCont, ModeCodeCRate);
             else if (Rising(inp.ModeF, _prev.ModeF))
-                _modeCode = TogglePair(_modeCode, ModeCodeF,    ModeCodeSovr);
+                _modeCode = CycleModes(_modeCode, ModeCodeF, ModeCodeSovr, ModeCodePrg);
 
             if (_jogging && !ModeMovesAxis(_modeCode)) StopJog();
 
             if (_modeCode != _csModeTrack) { ResetCsStart(); _csModeTrack = _modeCode; }
+        }
+
+        // The F% button cycles F% -> S% -> PRG STEP -> F%, skipping disabled modes.
+        // From any other button's mode it lands on the first enabled one.
+        static int CycleModes(int current, params int[] seq)
+        {
+            int at = Array.IndexOf(seq, current);
+            for (int k = 1; k <= seq.Length; k++)
+            {
+                int m = seq[((at < 0 ? -1 : at) + k) % seq.Length];
+                if (Tune.Modes[m].Enabled) return m;
+            }
+            return current;                        // all disabled -> inert button
         }
 
         static bool ModeMovesAxis(int m)
@@ -420,6 +448,7 @@ namespace iMachKflop
                 _jogChannel  = -1;
                 _lastIpmSent = 0;
                 _pendingSteps = 0;
+                _psPendingSec = 0;
                 ResetCsStart();
                 return;
             }
@@ -501,6 +530,19 @@ namespace iMachKflop
                     }
                     return;
 
+                case ModeCodePrg:
+                    // PRG STEP: the wheel moves a target point in PROGRAM TIME; the init's
+                    // servo glides the program along its path to it (never off the path,
+                    // never faster than programmed). EN + wheel picks seconds per detent.
+                    if (_jogging) StopJog();
+                    if (inp.En)
+                    {
+                        if (mpg != 0)
+                            _psStepIdx = ((_psStepIdx + Math.Sign(mpg)) % Tune.PsTimeSteps.Length + Tune.PsTimeSteps.Length) % Tune.PsTimeSteps.Length;
+                    }
+                    else if (mpg != 0) _psPendingSec += mpg * Tune.PsTimeSteps[_psStepIdx];
+                    return;
+
                 case ModeCodeSovr:
                     if (_jogging) StopJog();
                     if (mpg != 0)
@@ -509,6 +551,7 @@ namespace iMachKflop
                         // vc-p4s.hal (halui.spindle-override.scale 0.001 = 0.1%/detent),
                         // clamped to Tune.SsoMin..SsoMax. The pendant owns the value and
                         // pushes the absolute SSO to KMotionCNC.
+                        _ssoWheelMs = NowMs;
                         _ssoFrac += mpg * Tune.SsoStepPerDetent;
                         _ssoFrac = Math.Max(Tune.SsoMin, Math.Min(Tune.SsoMax, _ssoFrac));
                         _kflop.RequestSpindleOverride(_ssoFrac);
@@ -796,6 +839,8 @@ namespace iMachKflop
                 }
             }
 
+            ServicePrgStep(now);
+
             if (_pendingSteps != 0)
             {
                 if (_modeCode == ModeCodeStep)
@@ -816,6 +861,20 @@ namespace iMachKflop
             {
                 _cncSimCheckMs = NowMs;
                 _cncSim = CncWindow.SimulateChecked();   // read-only look at KMotionCNC's Simulate box
+            }
+            if (_modeCode == ModeCodeF && NowMs - _froCheckMs >= FroCheckMs)
+            {
+                _froCheckMs = NowMs;
+                _froScreen = CncWindow.FeedOverride();   // read-only: null unless KMotionCNC shows Feed
+            }
+            // S%: follow KMotionCNC's spindle override box (its slider may have moved),
+            // but only once the wheel has been still a while -- right after a click the
+            // screen still shows the old value until our command reaches KMotionCNC.
+            if (_modeCode == ModeCodeSovr && NowMs - _froCheckMs >= FroCheckMs && NowMs - _ssoWheelMs >= SsoSyncQuietMs)
+            {
+                _froCheckMs = NowMs;
+                double? sso = CncWindow.SpindleOverride();
+                if (sso.HasValue) _ssoFrac = sso.Value;
             }
 
             _kflop.SnapshotWorkDros(_dro);
@@ -850,7 +909,75 @@ namespace iMachKflop
 
         byte BuildIndicator()
         {
-            return (byte)((_kflop.DroSlot(_sel) << AxisIndicatorShift) | (_modeCode & 0x0F));
+            int ind = _modeCode == ModeCodePrg ? ModeCodeF : _modeCode;   // firmware knows 0..5 only
+            return (byte)((_kflop.DroSlot(_sel) << AxisIndicatorShift) | (ind & 0x0F));
+        }
+
+        // ---- PRG STEP ------------------------------------------------------------
+        // Keeps the KFLOP's UD_PS_ACTIVE in step with the selected mode and posts the
+        // wheel. LEAVING the mode while a program is parked in it engages a REAL feed
+        // hold first and clears the flag only once the hold has taken (or after
+        // PsExitHoldMaxMs), so the program never runs on by itself -- resume with
+        // Start+EN as after any hold. Also covers a bridge restart that finds the flag
+        // still set (the bridge starts in another mode).
+        void ServicePrgStep(long now)
+        {
+            if (!_kflop.Connected || !_kflop.ServiceAlive) return;
+            bool want = _modeCode == ModeCodePrg;
+            bool on   = _kflop.PsActive();
+
+            if (!_psWheelKnown)                  // continue the KFLOP's running total
+            {
+                _psWheel = _kflop.ReadPsWheel();
+                _psWheelKnown = true;
+            }
+
+            if (want)
+            {
+                _psExitHoldSent = false;
+                if (!on) _kflop.SetPsActive(true);
+                if (_psPendingSec != 0)
+                {
+                    _psWheel += _psPendingSec;
+                    _psPendingSec = 0;
+                    _kflop.WritePsWheel(_psWheel);
+                }
+                return;
+            }
+
+            _psPendingSec = 0;
+            if (!on) { _psExitHoldSent = false; return; }
+
+            if (_kflop.PsProgramInMode)           // a program is parked/moving in the mode
+            {
+                if (!_psExitHoldSent)
+                {
+                    _kflop.Hold();
+                    _held = true;
+                    _psExitHoldSent = true;
+                    _psExitSinceMs = now;
+                    Console.WriteLine("PRG STEP left mid-program -- feed hold engaged (resume with Start+EN).");
+                    return;
+                }
+                if (now - _psExitSinceMs < PsExitHoldMaxMs) return;   // wait for the hold to show
+            }
+            _kflop.SetPsActive(false);
+            _psExitHoldSent = false;
+        }
+
+        string PsLine1()
+        {
+            if (!_kflop.PsProgramInMode) return Tune.PsLbl;
+            string t = "P" + _kflop.PsTime.ToString("0.00");
+            if (t.Length > 8) t = "P" + _kflop.PsTime.ToString("0");
+            return t.Length > 8 ? Tune.PsLbl : t;
+        }
+
+        string PsLine2()
+        {
+            if (_kflop.PsState == 4) return Tune.StatusHold;
+            if (_kflop.PsState == 5) return Tune.PsEdge;
+            return "ST " + Tune.PsTimeSteps[_psStepIdx].ToString("0.000");
         }
 
         string ModeText()
@@ -862,6 +989,7 @@ namespace iMachKflop
                 case ModeCodeCRate: return "CRT% ";
                 case ModeCodeF:     return "FOVR ";
                 case ModeCodeSovr:  return "SOVR ";
+                case ModeCodePrg:   return "PRG  ";
                 default:            return "STEP ";
             }
         }
@@ -878,6 +1006,14 @@ namespace iMachKflop
                 case Arm.Spindle: return _spindleOn ? Tune.SpindleOffP : Tune.SpindleOnP;
                 default:          return "";
             }
+        }
+
+        // F% readout, the twin of S%: KMotionCNC's feed rate override read from its
+        // screen. "OR --" when it can't be read -- e.g. KMotionCNC's Rapid radio is
+        // selected, so its box shows the rapid override (keep it on Feed).
+        string FroText()
+        {
+            return _froScreen.HasValue ? "OR " + (int)Math.Round(_froScreen.Value * 100.0) + "%" : "OR --";
         }
 
         string SsoText()
@@ -969,6 +1105,8 @@ namespace iMachKflop
 
             string l2;
             bool showingSso = false;
+            bool showingFro = false;
+            bool showingPs = false;
             bool showingMachine = false;
             if (!_kflop.Connected || !_kflop.ServiceAlive) l2 = Tune.StatusNoLink;
             else if (_armed != Arm.None)                   l2 = ArmPrompt();
@@ -977,7 +1115,9 @@ namespace iMachKflop
             else if (_selAxisOff)                          l2 = label + Tune.StatusAxisOff;
             else if (NowMs < _zeroMsgUntilMs)              l2 = _lastZero == ZeroState.Ok ? Tune.StatusZeroed : Tune.StatusZeroErr;
             else if (NowMs < _gotozMsgUntilMs)             l2 = Tune.StatusGotoz;
+            else if (_modeCode == ModeCodePrg)             { l2 = PsLine2(); showingPs = true; }
             else if (_modeCode == ModeCodeSovr)            { l2 = SsoText(); showingSso = true; }
+            else if (_modeCode == ModeCodeF)               { l2 = FroText(); showingFro = true; }
             else if (_held)                                l2 = Tune.StatusHold;
             else if (!_kflop.MachineIdle)                  l2 = Tune.StatusBusy;
             else if (_modeCode == ModeCodeStep)            l2 = "STP" + StepInches.ToString("0.0000").Substring(1);
@@ -992,7 +1132,7 @@ namespace iMachKflop
             // KMotionCNC in Simulate: its screen DROs freeze and programs don't move the
             // machine, but the pendant still does -- say so on line 2, alternating with
             // the normal text (line 1 keeps the DRO). Prompts, lock and zero messages win.
-            if (_cncSim && _kflop.Connected && _kflop.ServiceAlive && _armed == Arm.None && !showingMachine && !showingSso && !_selAxisOff &&
+            if (_cncSim && _kflop.Connected && _kflop.ServiceAlive && _armed == Arm.None && !showingMachine && !showingSso && !showingFro && !showingPs && !_selAxisOff &&
                 NowMs >= _zeroMsgUntilMs && NowMs >= _gotozMsgUntilMs && (NowMs / Tune.CncSimBlinkMs) % 2 == 0)
                 l2 = Tune.StatusCncSim;
 
@@ -1000,6 +1140,8 @@ namespace iMachKflop
             // two-line "SPINDLE" / "START?|STOP?" display (4.3). S% mode shows
             // the manual's "Spindle" / "OR nnn%" override readout (2.6).
             if (showingSso)                 l1 = Tune.SpindleOvLbl;
+            else if (showingFro)            l1 = Tune.FeedOvLbl;
+            else if (showingPs)             l1 = PsLine1();
             else if (_armed == Arm.Spindle) l1 = Tune.SpindleLbl;
             else if (_armed == Arm.Machine || showingMachine) l1 = Tune.MachLbl;
 

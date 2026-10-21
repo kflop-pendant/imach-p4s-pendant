@@ -88,7 +88,7 @@ It is *not* usable as a plain HID device by this bridge.
 | `Pendant.cs` | USB transport and protocol. The 8-byte input report (buttons, mode bits, MPG wheel) and the 19-byte LCD output frame, including the activity counter the firmware needs to treat each frame as new. The byte map was reverse-engineered and hardware-validated. |
 | `Bridge.cs` | The main loop and all the behaviour. Axis selection (the three buttons each toggle a *pair*), mode selection, jogging (step / velocity / continuous), the hold-then-EN command grammar, LCD line composition, the machine-idle gate, and servicing of the custom-screen toggle. |
 | `KflopLink.cs` | Everything that touches the KFLOP: the UserData memory map, command posting, DRO reads, jog and step math per axis, the `MachineIdle` detector, and loading `EStopWatch.c` onto thread 5 and `PendantService.c` onto thread 7. |
-| `CncWindow.cs` | Read-only look at KMotionCNC's window: reads its **Simulate** checkbox (`IDC_Simulate`, `BM_GETCHECK`) so the LCD can flag "CNC SIM" -- in Simulate KMotionCNC's screen freezes and programs don't move the machine, but the pendant still does. Never clicks or changes anything. |
+| `CncWindow.cs` | Read-only look at KMotionCNC's window: reads its **Simulate** checkbox (`IDC_Simulate`, `BM_GETCHECK`) so the LCD can flag "CNC SIM" -- in Simulate KMotionCNC's screen freezes and programs don't move the machine, but the pendant still does -- and its **feed and spindle override boxes** (`IDC_FeedRateEdit` when the `IDC_Feed` radio is checked, `IDC_SpindleRateEdit`) for the F% / S% readouts. The KFLOP can't supply the feed override: KMotionCNC applies part of it in its own planner. Never clicks or changes anything. |
 | `pendant.conf` | **The file you tune.** A plain `key = value` text file of the speed/feel values — IPM caps, jog/step accels, step sizes, velocity/continuous tuning, half-speed, GOTOZ feeds, spindle-override range, DRO decimals. **Edit it and restart the bridge — no rebuild.** It is loaded from the exe's directory and validated at startup; a missing/malformed/out-of-range/unknown key makes the bridge refuse to start (`CONFIG/ERR` on the LCD, the offending key named on the console) rather than guess a speed. |
 | `Tune.cs` | The compiled config: the *structural* and *measured* settings that don't change at runtime — per-axis table (counts/unit, channel, enable flag, rotary flag), the counts-per-inch machine facts, per-mode and per-button enable tables, gate/watchdog timings, every LCD string, and the auto-start flag. Speed/feel numbers moved out to `pendant.conf`; Tune holds the shipped defaults and everything not meant to be hand-tuned. |
 | `TuneConfig.cs` | Loads and strictly validates `pendant.conf` into `Tune` at startup — fail-loud, no silent fallback to defaults, every applied value echoed to the console. |
@@ -140,7 +140,7 @@ bridge clears it).
 Reference examples live in [`../example-inits/`](../example-inits/) (with a walkthrough of
 the init contract in its README). These are the usual KFLOP init programs (axis parameters,
 coordinate system, limit watching). They are **not** part of the pendant work, but they
-carry two small additions the pendant relies on:
+carry a few small additions the pendant relies on:
 
 - a **config id** (UserData 54: 1 = quill on Z, 2 = knee on Z) telling the bridge which
   physical axis is on which channel (this mill can put either the knee or the quill on Z);
@@ -149,7 +149,11 @@ carry two small additions the pendant relies on:
   Knee Z and HSS share config id 2 and would otherwise be indistinguishable. Each init also
   writes the **negative** identity (-1 / -2 / -3) as the first thing it does, so the pendant
   shows "<name> / Loading" during the ~7 s load (and on a same-init reload), then "Loaded";
-- a **`DROLabel` call** that names the loaded init on the custom screen.
+- a **`DROLabel` call** that names the loaded init on the custom screen;
+- the **PRG STEP time servo** (`shared/ProgramStep.c`): `InitProgramStep()` before the main
+  loop and `ServiceProgramStep()` once per pass. It lives in the init because the init's loop
+  never waits on the PC, so it runs every time slice; `PendantService.c` can stall for seconds
+  on a PC call.
 
 | File | What it does |
 |---|---|
@@ -164,6 +168,7 @@ carry two small additions the pendant relies on:
 | File | What it does |
 |---|---|
 | `KflopToKMotionCNCFunctions.c` | **Dynomotion's own** helper (not ours). Provides `DoPC`, `DROLabel`, and friends. Any file that includes it must `#define TMP <n>` first, giving it a scratch UserData cell. |
+| `ProgramStep.c` | The **PRG STEP** time servo, included by each init and called every pass of its main loop. Adapted from Tom Kerekes' `MPGPanelTimeServo.c`: the wheel moves a target point in program time, and the feed rate override is steered (the KFLOP's "Temp" FRO calls, so KMotionCNC's own override is untouched) so the program glides forward or backward along the buffered path onto it -- never faster than programmed, never further than the machine can still stop. A real feed hold always wins. UserData 76 = mode on, 77 = wheel total (program seconds), 78 = state, 79 = program time. |
 
 ---
 
@@ -173,7 +178,20 @@ carry two small additions the pendant relies on:
   selectable step sizes.
 - **Axis select** — the three buttons toggle pairs (X/A, Y/B, C/Z), matching the
   silkscreen.
-- **Feed and spindle overrides**, spindle on/off.
+- **Feed and spindle overrides (F% / S%)**, spindle on/off. Both readouts show the value on
+  KMotionCNC's own screen -- `Feed` / `OR 60%`, `Spindle` / `OR 100%` -- and follow its sliders,
+  and the wheel always adjusts from the value on screen, so the pendant and KMotionCNC never
+  disagree. (The F% readout needs KMotionCNC's **Feed** radio button selected beside the
+  override box; with **Rapid** selected that box shows the rapid override, and the pendant
+  shows `OR --` rather than guess.)
+- **PRG STEP -- the handwheel scrolls the running program along its path**, forward *or
+  backward*. Press Cycle Start in PRG STEP and the program stops a few milliseconds in and
+  waits; each wheel click then moves it a set amount of *program time* (0.005 / 0.02 / 0.1 /
+  0.5 s, chosen with EN + wheel), gliding along the programmed path and stopping exactly where
+  you stop. The tool never leaves the programmed path, so there is nothing to jump back to,
+  and it is never faster than the programmed feed. Use it to creep the first plunge onto the
+  work, to back up after a problem, or to walk a new program through in the air. Details in
+  [docs/INSTALL_GUIDE.md](docs/INSTALL_GUIDE.md#prg-step).
 - **Cycle start / feed hold / halt / E-stop.**
 - **F1 = zero the work offset** on the selected axis.
 - **F2 = go to zero** — retracts Z clear, then moves X and Y home.

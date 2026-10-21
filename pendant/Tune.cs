@@ -143,7 +143,7 @@ namespace iMachKflop
             public string Label;      // short name, for startup/diagnostic messages
         }
 
-        // Indexed by ModeCode: 0=S, 1=Cs, 2=F%, 3=Vv, 4=C%, 5=S%
+        // Indexed by ModeCode: 0=S, 1=Cs, 2=F%, 3=Vv, 4=C%, 5=S%, 6=PRG STEP
         public static readonly ModeCfg[] Modes =
         {
             new ModeCfg { Enabled=true, Label="S"  },   // 0 step jog
@@ -152,7 +152,14 @@ namespace iMachKflop
             new ModeCfg { Enabled=true, Label="Vv" },   // 3 velocity jog
             new ModeCfg { Enabled=true, Label="C%" },   // 4 continuous-rate dial
             new ModeCfg { Enabled=true, Label="S%" },   // 5 spindle override
+            new ModeCfg { Enabled=true, Label="PS" },   // 6 PRG STEP: wheel scrolls the program along its path
         };
+
+        // PRG STEP: program-seconds per handwheel detent, chosen with EN + wheel
+        // (Tom Kerekes' MPGPanelTimeServo.c values). Starts on the second entry.
+        public static readonly double[] PsTimeSteps = { 0.005, 0.02, 0.1, 0.5 };
+        public const string PsLbl       = "PRG STEP";  // line 1 when no program is parked in the mode
+        public const string PsEdge      = "END BUF";   // line 2: can't go further (buffer start / not yet downloaded)
 
         // ===== 3c. ACTION-BUTTON ENABLE TABLE =================================
         // The hold-then-EN function buttons. Enabled=false makes the button FULLY
@@ -407,6 +414,7 @@ namespace iMachKflop
         public const string HoldPrompt     = "HOLD?";    // Start button, running
         public const string StopPrompt     = "STOP?";    // Stop button
         public const string SpindleOvLbl   = "Spindle";  // S% override readout, line 1
+        public const string FeedOvLbl      = "Feed";     // F% override readout, line 1 (twin of S%)
         public const string SpindleLbl     = "SPINDLE";  // spindle button held, line 1
         public const string SpindleOnP     = "START?";   // spindle off -> offer start
         public const string SpindleOffP    = "STOP?";    // spindle on  -> offer stop

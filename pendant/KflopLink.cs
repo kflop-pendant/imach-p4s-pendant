@@ -50,6 +50,10 @@ namespace iMachKflop
         const int UD_CMD_STAT  = 49;
         const int UD_CONFIG    = 54;   // init publishes 1 (Standard) or 2 (HSS/Knee-Z) -- knee/quill resolver
         const int UD_SPINDLE   = 55;   // PendantService publishes live spindle enable (ReadBit 156)
+        const int UD_PS_ACTIVE = 76;   // PRG STEP (shared/ProgramStep.c, init thread): 1 = mode selected on the pendant
+        const int UD_PS_WHEEL  = 77;   //   running total of handwheel program-seconds (bridge only ever adds)
+        const int UD_PS_STATE  = 78;   //   out: 0 no job, 1 job (mode off), 2 at target, 3 moving, 4 feed hold, 5 buffer edge
+        const int UD_PS_TIME   = 79;   //   out: program time now, seconds
         const int UD_PROMPT_BEAT = 74; // InitPrompt.c writes the KFLOP's Time_sec() every slice while blinking, 0 when not
         const int UD_INIT_ID   = 58;   // init publishes its identity for the LCD banner (1 Std / 2 Knee Z / 3 HSS).
                                        // NOT 56/57 -- those are the init<->service TP_HOLD_REQ/ACK handshake.
@@ -167,7 +171,21 @@ namespace iMachKflop
 
         public bool Connected    { get; private set; }
         public bool ServiceAlive => _heartbeatStalls < HeartbeatStallLimit;
-        public bool MachineIdle  => _idleSamples >= IdleSamplesRequired;
+        // Idle = no motion we didn't command, AND not a program parked under PRG STEP:
+        // there the axes stand still mid-program (FRO 0), which must not open the jog,
+        // zero or cycle-start paths.
+        public bool MachineIdle  => _idleSamples >= IdleSamplesRequired && !PsProgramInMode;
+
+        // ---- PRG STEP (see shared/ProgramStep.c) ----------------------------------
+        int    _psState;
+        double _psTime;
+        public int    PsState => _psState;           // refreshed by Service()
+        public double PsTime  => _psTime;
+        public bool   PsProgramInMode => _psState == 2 || _psState == 3 || _psState == 5;
+        public bool   PsActive()               => _km.GetUserDataDouble(UD_PS_ACTIVE) > 0.5;
+        public void   SetPsActive(bool on)     => _km.SetUserDataDouble(UD_PS_ACTIVE, on ? 1.0 : 0.0);
+        public double ReadPsWheel()            => _km.GetUserDataDouble(UD_PS_WHEEL);
+        public void   WritePsWheel(double sec) => _km.SetUserDataDouble(UD_PS_WHEEL, sec);
 
         public KflopLink(string serviceCFile, string watchCFile)
         {
@@ -741,6 +759,9 @@ namespace iMachKflop
             bool ours = (NowMs - _lastBridgeMotionMs) < MotionTailMs;
             if (moving && !ours) _idleSamples = 0;
             else if (_idleSamples < IdleSamplesRequired) _idleSamples++;
+
+            _psState = (int)Math.Round(_km.GetUserDataDouble(UD_PS_STATE));
+            _psTime  = _km.GetUserDataDouble(UD_PS_TIME);
 
             double hb = _km.GetUserDataDouble(UD_HEARTBEAT);
             if (hb == _lastHeartbeat) { if (_heartbeatStalls < int.MaxValue) _heartbeatStalls++; }

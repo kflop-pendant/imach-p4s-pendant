@@ -162,6 +162,58 @@ jogs the real machine, shows real coordinates and keeps its E-stop. It stays tic
 across restarts -- if the DROs look frozen while the pendant works, untick Simulate.
 The pendant LCD alternates line 2 with "CNC SIM" while Simulate is ticked.
 
+Feed and spindle overrides (F% / S%): the mode button cycles F% -> S% -> PRG STEP. F% shows
+`Feed` / `OR nn%` and S% shows `Spindle` / `OR nn%` -- the values on KMotionCNC's screen, read
+from its window, so they follow its sliders and the wheel adjusts from what the screen shows.
+Keep KMotionCNC's **Feed** radio button (beside the override box) selected: with **Rapid**
+selected that box shows the rapid override and the pendant's F% shows `OR --`. S% moves 0.1%
+per click, so its whole-number readout changes about every ten clicks.
+
+<a id="prg-step"></a>
+### PRG STEP -- scroll the program with the handwheel
+
+PRG STEP turns the handwheel into a control for *where the program is*: turn it forward and
+the running program advances along its programmed path; turn it back and it runs backward
+along the same path. Stop turning and it stops. The tool never leaves the programmed path,
+so leaving the mode or resuming can't make it jump, and it never moves faster than the
+programmed feed. (Idea and servo from Tom Kerekes at Dynomotion.)
+
+Using it:
+
+1. Press the F% / S% mode button until the LCD shows `PRG STEP`. Line 2 shows the step:
+   `ST 0.020` = 0.02 s of program time per wheel click. **EN + wheel** changes it:
+   0.005 / 0.02 / 0.1 / 0.5 s. At F5, 0.02 s is about 0.002" along the path.
+2. Press **Cycle Start**. M-codes at the top of the program (spindle on, etc.) run as usual;
+   the first path move is caught within a few milliseconds and the program waits. Line 1 shows
+   the program time (`P12.34`).
+3. **Turn the wheel** forward to move along the path, back to retrace it. A fast spin can run
+   at most about half a second ahead of the tool, so it stops soon after the wheel stops.
+4. `END BUF` on line 2 means you have reached the end of what can be stepped through: the
+   oldest part of the program the KFLOP still holds (going back) or what KMotionCNC has sent
+   so far (going forward).
+5. **Start + EN** while parked engages a real feed hold (`HOLD`); Start + EN again releases
+   it, and the program stays parked under the wheel.
+6. **To let the program run normally**, press the mode button to leave PRG STEP. A program
+   that is parked or moving in the mode goes into **feed hold** first, so it never runs on by
+   itself; then **Start + EN** continues it at its normal feed.
+
+Good to know:
+
+- While a program is parked in PRG STEP the pendant treats the machine as busy: no jogging,
+  zeroing or go-to-zero.
+- Going backward skips simple output bits rather than undoing them, and the program can't be
+  backed up past an M-code that runs a KFLOP program (spindle on/off, for example):
+  KMotionCNC finishes all queued motion before running one. After such an M-code in the
+  middle of a program, the next move is caught again and waits for the wheel.
+- A real Feed Hold, Halt or E-stop always wins.
+- KMotionCNC's own **Feed Hold** button does *not* light while a program is parked: PRG STEP
+  holds it with a temporary feed rate of zero, not a feed hold (a hold would freeze the wheel
+  too). To see the state on the screen, add a **Style-4 (DRO label) button bound to persist
+  Var 174** to your KMotionCNC screen: the example inits write `Program Step Mode:` READY /
+  PARKED / MOVING / HOLD / END OF BUFFER to it (blank when the mode is off).
+- The init does the stepping (`shared/ProgramStep.c`), so the mode needs an init that
+  includes it -- the example inits do.
+
 Adapting to a different pendant: `iMachKflop.exe --btnmap` prints the raw report
 and decoded bits so you can remap the buttons; `--ledmap` sweeps the LCD indicator
 byte. Both open only the pendant -- no KFLOP or machine power needed.

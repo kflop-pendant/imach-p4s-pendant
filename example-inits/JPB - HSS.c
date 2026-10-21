@@ -1,6 +1,7 @@
 #include "KMotionDef.h"
 #define TMP 10
 #include "../shared/KflopToKMotionCNCFunctions.c"
+#include "../shared/ProgramStep.c"	// PRG STEP: pendant handwheel scrolls the program along its path
 
 #define UD_ESTOP_REQ 59		// double-index UserData: init raises on hardware E-stop (bit 143); PendantService relays to DoPC(PC_COMM_ESTOP)
 
@@ -614,6 +615,7 @@ FPGA(STEP_PULSE_LENGTH_ADD)=32 + 0x40 + 0x80;
 	SetUserDataDouble(58, 3.0);	// pendant init identity -> LCD banner name: 3 = HSS  (var 58; NOT 56 = TP_HOLD_REQ)
 
 	persist.UserData[UD_RELAY_BLIPS] = 0;	// relay-blip counter: fresh per init load
+	InitProgramStep();			// PRG STEP off until the pendant selects it
 
 	for (;;)  				 		  	// loop forever
 	{
@@ -632,6 +634,7 @@ FPGA(STEP_PULSE_LENGTH_ADD)=32 + 0x40 + 0x80;
 		WaitNextTimeSlice();
 		ServiceWatchdogStatus();
 		UpdateWatchdogLED();		// Non-blocking watchdog-LED finisher (Tom 2026-07-24)
+		ServiceProgramStep();		// PRG STEP time servo -- every slice, never blocks
 				
 		if  (ControlProgramActive &&	// ControlProgramActive when loaded
    
