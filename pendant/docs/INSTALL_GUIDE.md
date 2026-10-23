@@ -150,6 +150,15 @@ KMotion installs **each version to its own folder** (e.g. `C:\KMotion5.4.5\`). A
 Your inits, M-codes, and screen are referenced by absolute path, so they carry over once the config
 points to them. The same bridge build works across KMotion versions — no rebuild needed.
 
+**KMotion's Migrate step and the KFLOP headers.** When you install a new KMotion and let it migrate
+your settings from the old install, check what it replaced: KMotion 5.5.1's Migrate also copied the old
+`DSP_KFLOP\KMotionDef.h` and `DSP_KFLOP\PC-DSP.h` over the new ones (reported to Dynomotion, who are
+fixing it). Your KFLOP programs then compile against the old structure layout without any error --
+for example `chan[i]` with a variable index reads the wrong axis. Look in
+`<KMotion>\MigrateBackups\<date>\migration.log` for `REPLACE DSP_KFLOP\...` lines; if there are any,
+copy the files from that backup's `Original\DSP_KFLOP` folder back into `<KMotion>\DSP_KFLOP`. Quick check:
+a KFLOP program that prints `sizeof(CHAN)` shows **448 on 5.5.1** (432 on 5.4.x).
+
 ## 8. Operating reference
 See ./KEYMAP.md and the vendor manual (linked in ./manuals/README.md). All key
 behavior follows the manual; confirm grammar is hold-then-EN (hold the function
@@ -168,6 +177,26 @@ from its window, so they follow its sliders and the wheel adjusts from what the 
 Keep KMotionCNC's **Feed** radio button (beside the override box) selected: with **Rapid**
 selected that box shows the rapid override and the pendant's F% shows `OR --`. S% moves 0.1%
 per click, so its whole-number readout changes about every ten clicks.
+
+### Pendant LCD messages
+
+Line 1 normally shows the selected axis and its DRO; line 2 the mode or one of these:
+
+| LCD | Meaning |
+|---|---|
+| `Waiting` / `for CNC` | KMotionCNC isn't running. |
+| `Waiting` / `for init` | No init loaded yet -- or a **new KMotionCNC session** with an init still on the KFLOP: press an init button (the screen blinks "CHOOSE init ->"). |
+| *init name* / `Loading.` then `Loaded` | An init is loading / has loaded. |
+| `RELOAD` / `INIT!` | KMotionCNC's Z/C scale doesn't match the loaded init (KMotionCNC restarted while the init ran). Reload the init before moving Z. |
+| `NO LINK` | The link to the KFLOP is down; the bridge restarts itself. |
+| `CONNECT` / `FAIL`, `CONFIG` / `ERR` | Couldn't connect to the KFLOP / `pendant.conf` is missing or invalid (details in `bridge.log`). |
+| `Control` / `Lock ON` | Controls locked (F3 or the screen's Machine Status button); `Lock OFF` flashes when unlocked. |
+| *axis* `OFF` (e.g. `Z OFF`) | The KFLOP disabled the selected axis on its own (e.g. following error). F3 lock/unlock or reloading the init re-enables it. |
+| `BUSY` / `HOLD` | The machine is moving / a feed hold is active. |
+| `CNC SIM` (alternating) | KMotionCNC's **Simulate** box is ticked: its screen freezes, but the pendant still moves the real machine. |
+| `ZEROED` / `ZERO ER`, `GOTOZ` | Result of F1 (zero) / F2 (go to zero). |
+| `Feed` / `OR nn%`, `Spindle` / `OR nn%` | F% / S% mode (`OR --`: KMotionCNC's Rapid radio is selected). |
+| `PRG STEP` / `ST 0.020`, `P12.34`, `END BUF` | PRG STEP mode: step size, program time, end of what can be stepped through. |
 
 <a id="prg-step"></a>
 ### PRG STEP -- scroll the program with the handwheel
