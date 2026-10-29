@@ -160,6 +160,7 @@ namespace iMachKflop
                     if (runBridge)
                     {
                         var bridge = new Bridge(pendant, kflop);
+                        if (LoadedBannerId != 0) bridge.ShowLoadedBanner(LoadedBannerId);
                         _activeBridge = bridge;
                         Console.WriteLine("Running. Watch the pendant LCD for the DRO. Press Ctrl+C to stop.");
 
@@ -290,9 +291,40 @@ namespace iMachKflop
             bool announcedKflop = false, announcedCnc = false, announcedInit = false;
             string promptedFor = null;     // KMotionCNC session InitPrompt.c was started for (this KFLOP power-up)
             bool announcedReload = false;
+            int  sawLoading = 0;           // an init load was seen while waiting (its identity)
+            long cncSeenMs = -1;           // when KMotionCNC was first seen running (server grace)
 
             while (!_stop)
             {
+                // Don't touch the KFLOP until KMotionCNC is running AND has started
+                // KMotionServer. KMotionServer is started by whichever program connects
+                // first; when that was this bridge, the server lived inside the
+                // PendantBridge scheduled task, so stopping or restarting the task
+                // (bridge-control Stop, the Bridge Restart icon) killed the server and
+                // KMotionCNC crashed with it (2026-10-29). Started by KMotionCNC, it
+                // survives anything done to the bridge. Grace period: if no server shows
+                // up within ServerWaitMs of KMotionCNC starting, connect anyway.
+                if (!CncRunning())
+                {
+                    cncSeenMs = -1;
+                    if (!announcedCnc)
+                    {
+                        Console.WriteLine("Waiting for KMotionCNC to be running...");
+                        announcedCnc = true;
+                        announcedInit = false;
+                    }
+                    SafeLcd(pendant, Tune.WaitCncL1, Tune.WaitCncL2);
+                    Thread.Sleep(Tune.GateConfigPollMs);
+                    continue;
+                }
+                if (cncSeenMs < 0) cncSeenMs = Environment.TickCount;
+                if (!ServerRunning() && unchecked(Environment.TickCount - (int)cncSeenMs) < ServerWaitMs)
+                {
+                    SafeLcd(pendant, Tune.WaitCncL1, Tune.WaitCncL2);
+                    Thread.Sleep(Tune.GateConfigPollMs);
+                    continue;
+                }
+
                 if (!kflop.BoardResponds())
                 {
                     sawBoard = false;
@@ -316,6 +348,7 @@ namespace iMachKflop
                     announcedInit = false;
                     promptedFor = null;       // a (re)appearing board may have been power-cycled
                     announcedReload = false;
+                    sawLoading = 0;
                 }
 
                 bool cnc = CncRunning();
@@ -332,14 +365,18 @@ namespace iMachKflop
                     // until the init's end, so it can't be used to tell).
                     PromptIfNewCncSession(kflop);
                     int state = kflop.ReadInitState();
-                    if (state > 0 && !kflop.PromptUp()) return id;
+                    if (state > 0 && !kflop.PromptUp())
+                    {
+                        if (sawLoading != 0) LoadedBannerId = state;   // -> "<name> / Loaded" on connect
+                        return id;
+                    }
 
                     if (!announcedReload)
                     {
                         Console.WriteLine("Waiting for the init to be reloaded in this KMotionCNC session (press your init button)...");
                         announcedReload = true;
                     }
-                    SafeLcd(pendant, Tune.WaitInitL1, Tune.WaitInitL2);
+                    WaitInitLcd(pendant, state, ref sawLoading);
                     Thread.Sleep(Tune.GateConfigPollMs);
                     continue;
                 }
@@ -379,11 +416,25 @@ namespace iMachKflop
                         Console.WriteLine(err == null ? "No init loaded -- screen prompt \"CHOOSE init ->\" blinking."
                                                       : "Screen init prompt not started: " + err);
                     }
-                    SafeLcd(pendant, Tune.WaitInitL1, Tune.WaitInitL2);
+                    WaitInitLcd(pendant, kflop.ReadInitState(), ref sawLoading);
                 }
                 Thread.Sleep(Tune.GateConfigPollMs);
             }
             return 0;
+        }
+
+        const int ServerWaitMs = 15000;
+
+        // Is KMotionServer running (normally started by KMotionCNC)?
+        static bool ServerRunning()
+        {
+            try
+            {
+                var ps = Process.GetProcessesByName("KMotionServer");
+                foreach (var p in ps) p.Dispose();
+                return ps.Length > 0;
+            }
+            catch { return false; }
         }
 
         // Is KMotionCNC actually running? (process name from Tune, no .exe)
@@ -456,6 +507,24 @@ namespace iMachKflop
                 File.WriteAllText(CncSessionFile, key);
             }
             catch { }
+        }
+
+        // Init the bridge saw load while it waited -- Bridge shows "<name> / Loaded" on start.
+        static int LoadedBannerId;
+        const int InitLoadingBlinkMs = 400;   // same blink as the connected bridge's "Loading."
+
+        // While waiting for an init: "Waiting / for init", or -- once an init is loading
+        // (var 58 negative) -- "<name> / Loading." with a blinking dot, exactly as the
+        // connected bridge shows a mid-session init change (2026-10-29, Jim).
+        static void WaitInitLcd(Pendant pendant, int state, ref int sawLoading)
+        {
+            if (state < 0)
+            {
+                sawLoading = -state;
+                bool dot = (Environment.TickCount / InitLoadingBlinkMs) % 2 == 0;
+                SafeLcd(pendant, Bridge.Center(Bridge.InitBannerName(-state)), Tune.InitLoadingL2 + (dot ? "." : " "));
+            }
+            else SafeLcd(pendant, Tune.WaitInitL1, Tune.WaitInitL2);
         }
 
         static void SafeLcd(Pendant pendant, string l1, string l2)

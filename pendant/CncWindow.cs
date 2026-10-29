@@ -130,7 +130,23 @@ namespace iMachKflop
             return h;
         }
 
+        // Process lookups cost ~6 ms, and Control() runs several times a second: reuse
+        // the last answer for PidCacheMs (a cached control handle is also re-checked
+        // with IsWindow, so a restarted KMotionCNC is picked up anyway).
+        const int PidCacheMs = 2000;
+        static int _pidCache;
+        static int _pidCacheAt = int.MinValue;
+
         static int CncPid()
+        {
+            int now = Environment.TickCount;
+            if (_pidCacheAt != int.MinValue && unchecked(now - _pidCacheAt) < PidCacheMs) return _pidCache;
+            _pidCache = LookupCncPid();
+            _pidCacheAt = now;
+            return _pidCache;
+        }
+
+        static int LookupCncPid()
         {
             int pid = 0;
             foreach (string name in Tune.CncProcessNames)

@@ -23,7 +23,8 @@
   rather than silent, and never dies on an unexpected error.
 
   Log: %LOCALAPPDATA%\PendantBridge\run-pendant.log (rotated at ~1 MB).
-  The bridge runs hidden; its own output is in bridge.log (previous run: bridge.prev.log).
+  The bridge runs hidden; its own output is in bridge.log, and every finished run is
+  appended to bridge-history.log (with any error text) so exit reasons survive a relaunch.
 
   To stop it (e.g. during development):  bridge-control.ps1 -Action Stop
   (or the Bridge Stop icon). It asks the bridge to exit cleanly and waits for it.
@@ -40,6 +41,26 @@ $ErrorActionPreference = 'Stop'   # surfaced via try/catch below; the loop never
 $LogDir  = Join-Path $env:LOCALAPPDATA 'PendantBridge'
 $LogFile = Join-Path $LogDir 'run-pendant.log'
 $LogMaxBytes = 1MB
+
+# Append one finished run's stdout + stderr to bridge-history.log (kept under
+# ~1 MB). Opened with ReadWrite sharing: the redirect handles may still be open.
+function Read-Shared([string]$Path) {
+    try {
+        if (-not (Test-Path $Path)) { return '' }
+        $fs = [IO.File]::Open($Path, 'Open', 'Read', 'ReadWrite')
+        try { return (New-Object IO.StreamReader($fs)).ReadToEnd() } finally { $fs.Dispose() }
+    } catch { return "(could not read ${Path}: $($_.Exception.Message))" }
+}
+function Save-BridgeRun([string]$Out, [string]$Err, [int]$ProcId, [datetime]$Started, [double]$Ran) {
+    try {
+        $hist = Join-Path $LogDir 'bridge-history.log'
+        if ((Test-Path $hist) -and ((Get-Item $hist).Length -gt 1MB)) { Move-Item $hist "$hist.old" -Force }
+        $errText = (Read-Shared $Err).Trim()
+        $block = "===== bridge pid $ProcId  started {0:yyyy-MM-dd HH:mm:ss}  ran {1:N1}s =====`r`n{2}" -f $Started, $Ran, (Read-Shared $Out)
+        if ($errText) { $block += "`r`n----- stderr -----`r`n$errText`r`n" }
+        Add-Content -Path $hist -Value $block -Encoding utf8
+    } catch { }
+}
 
 function Write-Log([string]$Message) {
     # Logging must never take the supervisor down.
@@ -89,14 +110,15 @@ while ($true) {
             # Hidden: no console window popping up (most of the time nobody needs it,
             # and users without a pendant shouldn't see it at all). Its output -- the
             # pendant.conf summary, connect / init / pendant events -- goes to
-            # bridge.log instead (previous run kept as bridge.prev.log). To watch it
-            # live, use bridge-control.ps1 -Action Console.
+            # bridge.log instead; when a run ends, its output (and any error text) is
+            # appended to bridge-history.log with the time and exit, so the reason a
+            # bridge exited survives the relaunch. (The old move-to-bridge.prev.log
+            # failed silently while the file was still held, so each relaunch wiped the
+            # last run's log -- 2026-10-29.) To watch live: bridge-control.ps1 -Action Console.
             $bridgeLog = Join-Path $LogDir 'bridge.log'
-            try {
-                if (Test-Path $bridgeLog) { Move-Item $bridgeLog (Join-Path $LogDir 'bridge.prev.log') -Force }
-            } catch { }
+            $bridgeErr = Join-Path $LogDir 'bridge.err.log'
             $proc = Start-Process -FilePath $exe.FullName -WorkingDirectory $exe.DirectoryName -PassThru `
-                        -WindowStyle Hidden -RedirectStandardOutput $bridgeLog -RedirectStandardError (Join-Path $LogDir 'bridge.err.log')
+                        -WindowStyle Hidden -RedirectStandardOutput $bridgeLog -RedirectStandardError $bridgeErr
             if (-not $proc) { throw 'Start-Process returned no process object' }
 
             Write-Log "Started $($exe.FullName) (pid $($proc.Id))."
@@ -107,6 +129,7 @@ while ($true) {
             $code = 'unknown'
             try { $code = $proc.ExitCode } catch { }
             Write-Log ("Bridge pid {0} exited after {1:N1}s (exit code {2})." -f $proc.Id, $ran, $code)
+            Save-BridgeRun $bridgeLog $bridgeErr $proc.Id $t0 $ran
 
             if ($ran -lt $FastExitSec) { $fastExits++ } else { $fastExits = 0 }
         }

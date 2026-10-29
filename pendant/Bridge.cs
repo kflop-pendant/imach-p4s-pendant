@@ -59,7 +59,15 @@ namespace iMachKflop
         const double FroStepFactor    = 1.03;
         const int    FroCheckMs       = 250;    // F% / S% mode: how often to read KMotionCNC's override box
         const int    SsoSyncQuietMs   = 700;    // S%: re-read the screen only after the wheel is still this long
-        const int    UpkeepIntervalMs = 50;
+        // Board upkeep (DROs, status, LCD) runs 10x a second. It was 50 ms, but every
+        // KFLOP call queues behind every other client's on KMotionServer, and the
+        // bridge's own steady stream of reads was saturating the link: one UserData
+        // read took 69 ms with the bridge running vs 5 ms without (2026-10-29), which
+        // starved the pendant reads past PendantDeadMs (missed buttons, "LinuxCNC" on
+        // the LCD while the bridge restarted). 100 ms is still faster than anyone reads.
+        const int    UpkeepIntervalMs = 100;
+        const int    ScreenToggleCheckMs = 250;  // screen Machine Status click: polled, not every loop pass
+        const int    SlowUpkeepMs        = 500;  // init state, RELOAD INIT, spindle: change rarely
         const int    UpkeepThrowLimit = 6;    // ~300ms of failing board ops -> link lost
         const bool   EnableCycleStart = true;
         const bool   EnableFroOverride= true;
@@ -112,6 +120,8 @@ namespace iMachKflop
         double _psWheel;                // running total posted to the KFLOP
         bool   _psWheelKnown;           // _psWheel synced to the KFLOP's value (bridge restart)
         bool   _psExitHoldSent;         // leaving the mode mid-program: Hold() sent, waiting for it
+        bool   _psFlagOn;               // our copy of the KFLOP's UD_PS_ACTIVE (only the bridge writes it)
+        bool   _psFlagKnown;            // read once from the KFLOP at start (a restart may find it set)
         long   _psExitSinceMs;
         int    _stepIdx;
 
@@ -134,6 +144,9 @@ namespace iMachKflop
         bool _held;
 
         long      _lastUpkeepMs;
+        long      _nextToggleCheckMs;
+        long      _nextSlowUpkeepMs;
+        int       _initStateCache;
         long      _lastInputMs;                  // last non-null pendant Read() -- pendant-input watchdog
         ZeroState _lastZero = ZeroState.Idle;
         long      _zeroMsgUntilMs;
@@ -162,6 +175,15 @@ namespace iMachKflop
             _pendant = pendant;
             _kflop   = kflop;
             _lastWheelMs = NowMs;
+        }
+
+        // The init finished loading while the bridge was still waiting to connect (first
+        // load of the day, or the reload in a new KMotionCNC session): show the same
+        // "<name> / Loaded" banner a mid-session init change shows.
+        public void ShowLoadedBanner(int initId)
+        {
+            _cfgInitId     = initId;
+            _cfgMsgUntilMs = NowMs + InitBannerMs;
         }
 
         public void Stop() => _run = false;
@@ -250,7 +272,11 @@ namespace iMachKflop
                 // board hiccup here can't take down the loop.
                 try
                 {
-                    if (_kflop.ScreenTogglePending())
+                    // Polled 10x a second, not on every loop pass: each poll is a KFLOP
+                    // read, and once per pass (every few ms) it was the bridge's biggest
+                    // single load on the link.
+                    if (NowMs >= _nextToggleCheckMs && (_nextToggleCheckMs = NowMs + ScreenToggleCheckMs) > 0 &&
+                        _kflop.ScreenTogglePending())
                     {
                         _kflop.ClearScreenToggle();
                         if (_kflop.MachineIdle) _kflop.RequestMachineToggle();
@@ -778,6 +804,7 @@ namespace iMachKflop
                     if (Rising(inp.En, _prev.En))               // EN tap = execute (once per hold)
                     {
                         _kflop.RequestSpindle(!_spindleOn);      // toggle: command the opposite state
+                        _spindleOn = !_spindleOn;                // the KFLOP is only re-read every SlowUpkeepMs
                         _spindleExecuted = true;
                         _armed = Arm.None;
                     }
@@ -815,7 +842,18 @@ namespace iMachKflop
             // ("<name> / Loading" -- display-only, so not gated on idle). Seeing it also
             // makes the final "Loaded" banner fire when the SAME init is reloaded, which
             // the identity-change test alone can't detect (1 -> -1 -> 1).
-            int initState = _kflop.ReadInitState();
+            // Rarely-changing values are read every SlowUpkeepMs, not every pass: each
+            // read is a KFLOP round trip, and reading everything every pass saturated
+            // the USB link (2026-10-29). Below, only the selected axis's DRO is read.
+            bool slow = now >= _nextSlowUpkeepMs;
+            if (slow)
+            {
+                _nextSlowUpkeepMs = now + SlowUpkeepMs;
+                _initStateCache = _kflop.ReadInitState();
+                _tpBad          = _kflop.ReadTpBad();          // RELOAD INIT warning (PendantService CheckInitScale)
+                _spindleOn      = _kflop.SpindleOn();          // live spindle enable for the LCD + toggle
+            }
+            int initState = _initStateCache;
             if (initState < 0)
             {
                 if (_loadingInitId != -initState)
@@ -852,10 +890,10 @@ namespace iMachKflop
                 else _pendingSteps = 0;
             }
 
-            _tpBad = _kflop.ReadTpBad();          // RELOAD INIT warning (PendantService CheckInitScale)
+            bool machEn = _kflop.MachineEnabled;     // read once per pass
             // An axis KFLOP disabled on its own -- e.g. the knee tripping MaxFollowingError
             // on a long upward jog -- just stops; nothing else says why (2026-10-03).
-            try { _selAxisOff = _kflop.MachineEnabled && !_kflop.AxisEnabledSel(_sel); }
+            try { _selAxisOff = machEn && !_kflop.AxisEnabledSel(_sel); }
             catch { _selAxisOff = false; }
             if (NowMs - _cncSimCheckMs >= Tune.CncSimCheckMs)
             {
@@ -877,8 +915,8 @@ namespace iMachKflop
                 if (sso.HasValue) _ssoFrac = sso.Value;
             }
 
-            _kflop.SnapshotWorkDros(_dro);
-            _spindleOn = _kflop.SpindleOn();     // cache live spindle enable for the LCD + toggle
+            int slot = _kflop.DroSlot(_sel);
+            _dro[slot] = _kflop.ReadWorkDro(slot);  // only the axis on the LCD
 
             ZeroState z = _kflop.PollZero();
             if (z != _lastZero)
@@ -896,7 +934,6 @@ namespace iMachKflop
                     _gotozMsgUntilMs = now + 1000;
             }
 
-            bool machEn = _kflop.MachineEnabled;
             if (machEn != _lastMachineEnabled)
             {
                 _lastMachineEnabled = machEn;
@@ -924,7 +961,11 @@ namespace iMachKflop
         {
             if (!_kflop.Connected || !_kflop.ServiceAlive) return;
             bool want = _modeCode == ModeCodePrg;
-            bool on   = _kflop.PsActive();
+            // Only the bridge writes the flag, so read it once and track it after that --
+            // no KFLOP read per pass when PRG STEP isn't in use.
+            if (!_psFlagKnown) { _psFlagOn = _kflop.PsActive(); _psFlagKnown = true; }
+            bool on = _psFlagOn;
+            _kflop.PsWatch = on || want;             // KflopLink reads the PS state only then
 
             if (!_psWheelKnown)                  // continue the KFLOP's running total
             {
@@ -935,7 +976,7 @@ namespace iMachKflop
             if (want)
             {
                 _psExitHoldSent = false;
-                if (!on) _kflop.SetPsActive(true);
+                if (!on) { _kflop.SetPsActive(true); _psFlagOn = true; }
                 if (_psPendingSec != 0)
                 {
                     _psWheel += _psPendingSec;
@@ -962,6 +1003,7 @@ namespace iMachKflop
                 if (now - _psExitSinceMs < PsExitHoldMaxMs) return;   // wait for the hold to show
             }
             _kflop.SetPsActive(false);
+            _psFlagOn = false;
             _psExitHoldSent = false;
         }
 
@@ -1035,7 +1077,7 @@ namespace iMachKflop
         }
 
         // Init name for the load banner, by identity (var 56).
-        static string InitBannerName(int initId)
+        internal static string InitBannerName(int initId)
         {
             switch (initId)
             {
@@ -1049,7 +1091,7 @@ namespace iMachKflop
         // Center a string in the 8-char LCD line (odd padding biases one space right).
         // A string already >= 8 chars is passed through (PutLine truncates it).
         const int LcdWidth = 8;
-        static string Center(string s)
+        internal static string Center(string s)
         {
             s = s ?? "";
             if (s.Length >= LcdWidth) return s;

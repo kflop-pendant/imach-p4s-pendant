@@ -179,7 +179,8 @@ namespace iMachKflop
         // ---- PRG STEP (see shared/ProgramStep.c) ----------------------------------
         int    _psState;
         double _psTime;
-        public int    PsState => _psState;           // refreshed by Service()
+        public int    PsState => _psState;           // refreshed by Service() while PsWatch
+        public bool   PsWatch { get; set; }          // bridge: PRG STEP selected or its flag still set
         public double PsTime  => _psTime;
         public bool   PsProgramInMode => _psState == 2 || _psState == 3 || _psState == 5;
         public bool   PsActive()               => _km.GetUserDataDouble(UD_PS_ACTIVE) > 0.5;
@@ -517,6 +518,9 @@ namespace iMachKflop
 
         // ---- readback ----------------------------------------------------------
 
+        // One axis's work DRO (the LCD only ever shows the selected axis).
+        public double ReadWorkDro(int slot) => _km.GetUserDataDouble(UD_DRO + slot);
+
         public void SnapshotWorkDros(double[] dst)
         {
             for (int i = 0; i < 6; i++)
@@ -760,8 +764,12 @@ namespace iMachKflop
             if (moving && !ours) _idleSamples = 0;
             else if (_idleSamples < IdleSamplesRequired) _idleSamples++;
 
-            _psState = (int)Math.Round(_km.GetUserDataDouble(UD_PS_STATE));
-            _psTime  = _km.GetUserDataDouble(UD_PS_TIME);
+            if (PsWatch)                               // two KFLOP reads -- only while PRG STEP matters
+            {
+                _psState = (int)Math.Round(_km.GetUserDataDouble(UD_PS_STATE));
+                _psTime  = _km.GetUserDataDouble(UD_PS_TIME);
+            }
+            else _psState = 0;
 
             double hb = _km.GetUserDataDouble(UD_HEARTBEAT);
             if (hb == _lastHeartbeat) { if (_heartbeatStalls < int.MaxValue) _heartbeatStalls++; }
