@@ -756,7 +756,7 @@ namespace iMachKflop
                     _armed = Arm.Start;                          // preview START/HOLD/RESUME while held
                     if (Rising(inp.En, _prev.En))               // EN tap = execute (once per hold)
                     {
-                        if (_held)                   { _kflop.Resume(); _held = false; }
+                        if (_held || _kflop.JobHeld) { _kflop.Resume(); _held = false; }   // also a hold from the screen
                         else if (_kflop.MachineIdle) { if (EnableCycleStart) _kflop.RequestExecute(); }
                         else                         { _kflop.Hold();   _held = true;  }
                         _startExecuted = true;
@@ -1043,7 +1043,7 @@ namespace iMachKflop
                 case Arm.Zero:    return Tune.ZeroPrefix + _kflop.SelLabel(_sel) + "?";
                 case Arm.Gotoz:   return Tune.GotozPrompt;
                 case Arm.Machine: return _kflop.MachineEnabled ? Tune.MachPromptLock : Tune.MachPromptUnlk;
-                case Arm.Start:   return _held ? Tune.ResumePrompt : (_kflop.MachineIdle ? Tune.StartPrompt : Tune.HoldPrompt);
+                case Arm.Start:   return _held || _kflop.JobHeld ? Tune.ResumePrompt : (_kflop.MachineIdle ? Tune.StartPrompt : Tune.HoldPrompt);
                 case Arm.Stop:    return Tune.StopPrompt;
                 case Arm.Spindle: return _spindleOn ? Tune.SpindleOffP : Tune.SpindleOnP;
                 default:          return "";
@@ -1160,7 +1160,7 @@ namespace iMachKflop
             else if (_modeCode == ModeCodePrg)             { l2 = PsLine2(); showingPs = true; }
             else if (_modeCode == ModeCodeSovr)            { l2 = SsoText(); showingSso = true; }
             else if (_modeCode == ModeCodeF)               { l2 = FroText(); showingFro = true; }
-            else if (_held)                                l2 = Tune.StatusHold;
+            else if (_held || _kflop.JobHeld)              l2 = Tune.StatusHold;
             else if (!_kflop.MachineIdle)                  l2 = Tune.StatusBusy;
             else if (_modeCode == ModeCodeStep)            l2 = "STP" + StepInches.ToString("0.0000").Substring(1);
             else if (_modeCode == ModeCodeCRate)           l2 = "C%" + ((int)Math.Round(_csRate * 100));

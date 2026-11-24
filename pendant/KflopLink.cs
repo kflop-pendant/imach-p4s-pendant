@@ -171,15 +171,18 @@ namespace iMachKflop
 
         public bool Connected    { get; private set; }
         public bool ServiceAlive => _heartbeatStalls < HeartbeatStallLimit;
-        // Idle = no motion we didn't command, AND not a program parked under PRG STEP:
-        // there the axes stand still mid-program (FRO 0), which must not open the jog,
-        // zero or cycle-start paths.
-        public bool MachineIdle  => _idleSamples >= IdleSamplesRequired && !PsProgramInMode;
+        // Idle = no motion we didn't command, AND no program running, held or parked:
+        // in a Feed Hold or under PRG STEP the axes stand still mid-program, which must
+        // not open the jog, zero or cycle-start paths. (2026-11-24: a Vv jog during a
+        // screen Feed Hold resumed the program.)
+        public bool MachineIdle  => _idleSamples >= IdleSamplesRequired && !JobActive;
 
-        // ---- PRG STEP (see shared/ProgramStep.c) ----------------------------------
+        // ---- PRG STEP / job state (see shared/ProgramStep.c) ---------------------
         int    _psState;
         double _psTime;
-        public int    PsState => _psState;           // refreshed by Service() while PsWatch
+        public int    PsState => _psState;           // refreshed by Service() every pass
+        public bool   JobActive => _psState != 0;    // a program is running, held or parked (any mode)
+        public bool   JobHeld   => _psState == 4;    // a real Feed Hold (screen or pendant) mid-program
         public bool   PsWatch { get; set; }          // bridge: PRG STEP selected or its flag still set
         public double PsTime  => _psTime;
         public bool   PsProgramInMode => _psState == 2 || _psState == 3 || _psState == 5;
@@ -764,12 +767,9 @@ namespace iMachKflop
             if (moving && !ours) _idleSamples = 0;
             else if (_idleSamples < IdleSamplesRequired) _idleSamples++;
 
-            if (PsWatch)                               // two KFLOP reads -- only while PRG STEP matters
-            {
-                _psState = (int)Math.Round(_km.GetUserDataDouble(UD_PS_STATE));
-                _psTime  = _km.GetUserDataDouble(UD_PS_TIME);
-            }
-            else _psState = 0;
+            // job state every pass (MachineIdle needs it); program time only while PRG STEP matters
+            _psState = (int)Math.Round(_km.GetUserDataDouble(UD_PS_STATE));
+            if (PsWatch) _psTime = _km.GetUserDataDouble(UD_PS_TIME);
 
             double hb = _km.GetUserDataDouble(UD_HEARTBEAT);
             if (hb == _lastHeartbeat) { if (_heartbeatStalls < int.MaxValue) _heartbeatStalls++; }

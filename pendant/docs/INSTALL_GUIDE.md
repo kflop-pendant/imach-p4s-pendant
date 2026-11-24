@@ -192,7 +192,7 @@ Line 1 normally shows the selected axis and its DRO; line 2 the mode or one of t
 | `CONNECT` / `FAIL`, `CONFIG` / `ERR` | Couldn't connect to the KFLOP / `pendant.conf` is missing or invalid (details in `bridge.log`). |
 | `Control` / `Lock ON` | Controls locked (F3 or the screen's Machine Status button); `Lock OFF` flashes when unlocked. |
 | *axis* `OFF` (e.g. `Z OFF`) | The KFLOP disabled the selected axis on its own (e.g. following error). F3 lock/unlock or reloading the init re-enables it. |
-| `BUSY` / `HOLD` | The machine is moving / a feed hold is active. |
+| `BUSY` / `HOLD` | The machine is moving or a program is running / a feed hold is active (from the screen or the pendant). No jogging, zeroing or go-to-zero while either shows. |
 | `CNC SIM` (alternating) | KMotionCNC's **Simulate** box is ticked: its screen freezes, but the pendant still moves the real machine. |
 | `ZEROED` / `ZERO ER`, `GOTOZ` | Result of F1 (zero) / F2 (go to zero). |
 | `Feed` / `OR nn%`, `Spindle` / `OR nn%` | F% / S% mode (`OR --`: KMotionCNC's Rapid radio is selected). |
@@ -228,8 +228,10 @@ Using it:
 
 Good to know:
 
-- While a program is parked in PRG STEP the pendant treats the machine as busy: no jogging,
-  zeroing or go-to-zero.
+- While a program is running, held or parked in PRG STEP the pendant treats the machine as
+  busy: no jogging, zeroing or go-to-zero. Start + EN resumes a feed hold, also one pressed on
+  the screen. (The bridge reads the job state that `ProgramStep.c` publishes, so your inits
+  need it -- the example inits include it.)
 - Going backward skips simple output bits rather than undoing them, and the program can't be
   backed up past an M-code that runs a KFLOP program (spindle on/off, for example):
   KMotionCNC finishes all queued motion before running one. After such an M-code in the
